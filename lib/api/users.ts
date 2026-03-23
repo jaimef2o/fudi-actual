@@ -1,0 +1,308 @@
+// @ts-nocheck
+import { supabase } from '../supabase';
+import type { UserRow, RelationshipRow } from '../database.types';
+
+// ─── Handle utilities ──────────────────────────────────────────────────────
+
+/**
+ * Convert a display name into a valid handle candidate:
+ * lowercase, accents removed, only [a-z0-9_], max 20 chars.
+ */
+export function nameToHandle(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // strip diacritics
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '')      // keep only allowed chars
+    .slice(0, 20)
+    || 'usuario';
+}
+
+/**
+ * Validate handle format: 3–20 chars, only [a-z0-9_], no leading/trailing underscore.
+ * Returns an error string or null if valid.
+ */
+export function validateHandleFormat(handle: string): string | null {
+  if (handle.length < 3) return 'Mínimo 3 caracteres.';
+  if (handle.length > 20) return 'Máximo 20 caracteres.';
+  if (!/^[a-z0-9_]+$/.test(handle)) return 'Solo letras minúsculas, números y _.';
+  if (handle.startsWith('_') || handle.endsWith('_')) return 'No puede empezar ni terminar con _.';
+  return null;
+}
+
+/** Returns true if the handle is available (not taken). */
+export async function isHandleAvailable(handle: string): Promise<boolean> {
+  const { count } = await supabase
+    .from('users')
+    .select('id', { count: 'exact', head: true })
+    .eq('handle', handle);
+  return (count ?? 0) === 0;
+}
+
+// ─── Profile ───────────────────────────────────────────────────────────────
+
+export async function getProfile(userId: string): Promise<UserRow | null> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProfile(
+  userId: string,
+  updates: { name?: string; bio?: string; city?: string; avatar_url?: string }
+) {
+  const { data, error } = await supabase
+    .from('users')
+    .update(updates)
+    .eq('id', userId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+// ─── Relationships ──────────────────────────────────────────────────────────
+
+export type FriendWithProfile = RelationshipRow & { friend: UserRow };
+
+export type FollowRequest = {
+  user_id: string;
+  created_at: string;
+  requester: UserRow;
+};
+
+// Mutual friends
+export async function getFriends(userId: string): Promise<FriendWithProfile[]> {
+  const { data, error } = await supabase
+    .from('relationships')
+    .select(`
+      *,
+      friend:users!target_id (*)
+    `)
+    .eq('user_id', userId)
+    .eq('type', 'mutual');
+
+  if (error) throw error;
+  return (data ?? []) as FriendWithProfile[];
+}
+
+// People you follow but who haven't followed back yet (type='following', outgoing)
+export async function getFollowing(userId: string): Promise<FriendWithProfile[]> {
+  const { data, error } = await supabase
+    .from('relationships')
+    .select(`
+      *,
+      friend:users!target_id (*)
+    `)
+    .eq('user_id', userId)
+    .eq('type', 'following');
+
+  if (error) throw error;
+  return (data ?? []) as FriendWithProfile[];
+}
+
+// People who follow you but you haven't followed back (pending requests)
+export async function getFollowRequests(userId: string): Promise<FollowRequest[]> {
+  const { data, error } = await supabase
+    .from('relationships')
+    .select(`
+      user_id,
+      created_at,
+      requester:users!user_id (*)
+    `)
+    .eq('target_id', userId)
+    .eq('type', 'following');
+
+  if (error) throw error;
+  return (data ?? []) as unknown as FollowRequest[];
+}
+
+export async function getRelationship(
+  userId: string,
+  targetId: string
+): Promise<RelationshipRow | null> {
+  const { data } = await supabase
+    .from('relationships')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('target_id', targetId)
+    .maybeSingle();
+
+  return data;
+}
+
+// Follow with mutual upgrade:
+// • If target already follows userId → upgrade both rows to 'mutual'
+// • Otherwise → insert 'following'
+export async function followUser(userId: string, targetId: string) {
+  // Check if the target already follows us
+  const { data: reverseRow } = await supabase
+    .from('relationships')
+    .select('type')
+    .eq('user_id', targetId)
+    .eq('target_id', userId)
+    .maybeSingle();
+
+  if (reverseRow) {
+    // They follow us → make it mutual in both directions
+    const { error: e1 } = await supabase
+      .from('relationships')
+      .update({ type: 'mutual' })
+      .eq('user_id', targetId)
+      .eq('target_id', userId);
+    if (e1) throw e1;
+
+    const { error: e2 } = await supabase
+      .from('relationships')
+      .upsert({ user_id: userId, target_id: targetId, type: 'mutual' });
+    if (e2) throw e2;
+  } else {
+    // Simple one-way follow
+    const { error } = await supabase
+      .from('relationships')
+      .upsert({ user_id: userId, target_id: targetId, type: 'following' });
+    if (error) throw error;
+  }
+}
+
+// Unfollow with mutual downgrade:
+// • If it was mutual → downgrade their row back to 'following'
+// • Then delete our row
+export async function unfollowUser(userId: string, targetId: string) {
+  // Check the reverse row before deleting
+  const { data: reverseRow } = await supabase
+    .from('relationships')
+    .select('type')
+    .eq('user_id', targetId)
+    .eq('target_id', userId)
+    .maybeSingle();
+
+  // Delete our outgoing follow
+  const { error } = await supabase
+    .from('relationships')
+    .delete()
+    .eq('user_id', userId)
+    .eq('target_id', targetId);
+  if (error) throw error;
+
+  // If it was mutual, downgrade their row to 'following' (they still follow us)
+  if (reverseRow?.type === 'mutual') {
+    await supabase
+      .from('relationships')
+      .update({ type: 'following' })
+      .eq('user_id', targetId)
+      .eq('target_id', userId);
+  }
+}
+
+// ─── Invitations ────────────────────────────────────────────────────────────
+
+export type InvitationRow = {
+  id: string;
+  inviter_user_id: string;
+  token: string;
+  claimed_by_user_id: string | null;
+  created_at: string;
+  claimed_at: string | null;
+  inviter?: Pick<UserRow, 'id' | 'name' | 'avatar_url'>;
+};
+
+/** Generate a cryptographically random URL-safe token. */
+function randomToken(): string {
+  const bytes = new Uint8Array(16);
+  // Works in React Native (Hermes) and browsers
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** Create a new invitation token for the current user. */
+export async function createInvitation(inviterUserId: string): Promise<InvitationRow> {
+  const token = randomToken();
+
+  const { data, error } = await supabase
+    .from('invitations')
+    .insert({ inviter_user_id: inviterUserId, token })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as InvitationRow;
+}
+
+/** Look up an invitation by token (includes inviter profile). */
+export async function getInvitation(token: string): Promise<InvitationRow | null> {
+  const { data } = await supabase
+    .from('invitations')
+    .select(`
+      *,
+      inviter:users!inviter_user_id (id, name, avatar_url)
+    `)
+    .eq('token', token)
+    .maybeSingle();
+
+  return data as InvitationRow | null;
+}
+
+export type ClaimResult = 'ok' | 'already_claimed' | 'not_found' | 'error';
+
+/**
+ * Claim an invitation — marks it as used and creates a mutual following
+ * relationship between inviter and new user.
+ * Returns a status so callers can show the right message.
+ */
+export async function claimInvitation(token: string, newUserId: string): Promise<ClaimResult> {
+  try {
+    const { data: inv, error } = await supabase
+      .from('invitations')
+      .select('id, inviter_user_id, claimed_by_user_id')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (error) return 'error';
+    if (!inv) return 'not_found';
+    if (inv.claimed_by_user_id) {
+      // Allow the same user to re-claim their own invite (e.g. re-install)
+      if (inv.claimed_by_user_id === newUserId) return 'ok';
+      return 'already_claimed';
+    }
+
+    const { error: updateErr } = await supabase
+      .from('invitations')
+      .update({ claimed_by_user_id: newUserId, claimed_at: new Date().toISOString() })
+      .eq('id', inv.id);
+
+    if (updateErr) return 'error';
+
+    // Mutual follow: inviter ↔ new user
+    await followUser(inv.inviter_user_id, newUserId);
+    await followUser(newUserId, inv.inviter_user_id);
+
+    return 'ok';
+  } catch {
+    return 'error';
+  }
+}
+
+// Search users by name or handle
+export async function searchUsers(query: string): Promise<UserRow[]> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .or(`name.ilike.%${query}%,handle.ilike.%${query}%`)
+    .limit(20);
+
+  if (error) throw error;
+  return data ?? [];
+}

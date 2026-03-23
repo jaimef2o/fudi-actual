@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Build artifacts
+dist.zip
+
+# Claude local config
+.claude/
