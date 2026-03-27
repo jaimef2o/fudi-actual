@@ -1,21 +1,20 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { CityPicker } from './CityPicker';
 import { NeighborhoodChips } from './NeighborhoodChips';
-import { CUISINE_CATEGORIES, CUISINE_ICONS, PRICE_LEVELS, type CuisineCategory, type PriceLevel } from '../app/(tabs)/descubrir';
+import { PRICE_SYMBOLS, type PriceSymbol } from './PriceFilterChips';
 
 export type LocationFilters = {
   city: string;
   neighborhoods: string[];
-  cuisines: CuisineCategory[];
-  prices: PriceLevel[];
+  prices: string[];
+  sortBy: 'rating' | 'trending';
 };
 
 export const EMPTY_FILTERS: LocationFilters = {
   city: '',
   neighborhoods: [],
-  cuisines: [],
   prices: [],
+  sortBy: 'rating',
 };
 
 interface LocationFilterBarProps {
@@ -23,27 +22,21 @@ interface LocationFilterBarProps {
   onChange: (filters: LocationFilters) => void;
 }
 
-const PRICE_DESCS: Record<PriceLevel, string> = {
-  '$': 'Menos de 20€',
-  '$$': '20€ – 50€',
-  '$$$': 'Más de 50€',
+const PRICE_DESCS: Record<PriceSymbol, string> = {
+  '€':    '0–20€ pp',
+  '€€':   '20–35€ pp',
+  '€€€':  '35–60€ pp',
+  '€€€€': '60€+ pp',
 };
 
 export function LocationFilterBar({ filters, onChange }: LocationFilterBarProps) {
   function setCity(city: string) {
-    // Changing city resets neighborhoods
     onChange({ ...filters, city, neighborhoods: [] });
   }
   function setNeighborhoods(neighborhoods: string[]) {
     onChange({ ...filters, neighborhoods });
   }
-  function toggleCuisine(c: CuisineCategory) {
-    const cuisines = filters.cuisines.includes(c)
-      ? filters.cuisines.filter((x) => x !== c)
-      : [...filters.cuisines, c];
-    onChange({ ...filters, cuisines });
-  }
-  function togglePrice(p: PriceLevel) {
+  function togglePrice(p: string) {
     const prices = filters.prices.includes(p)
       ? filters.prices.filter((x) => x !== p)
       : [...filters.prices, p];
@@ -53,60 +46,46 @@ export function LocationFilterBar({ filters, onChange }: LocationFilterBarProps)
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.container}>
       {/* Ciudad */}
-      <Text style={s.sectionLabel}>CIUDAD</Text>
-      <View style={{ marginBottom: 20, zIndex: 10 }}>
-        <CityPicker
-          value={filters.city}
-          onChange={setCity}
-          placeholder="Ej: Madrid, Barcelona, París..."
-        />
+      <View style={s.row}>
+        <Text style={s.sectionLabel}>Ciudad</Text>
+        <View style={{ flex: 1, zIndex: 10 }}>
+          <CityPicker
+            value={filters.city}
+            onChange={setCity}
+            placeholder="Ej: Madrid, Barcelona..."
+          />
+        </View>
       </View>
 
-      {/* Barrio — only when city selected and has neighborhoods */}
       {filters.city.trim() !== '' && (
-        <NeighborhoodChips
-          city={filters.city}
-          selected={filters.neighborhoods}
-          onChange={setNeighborhoods}
-        />
+        <View style={{ marginBottom: 16 }}>
+          <NeighborhoodChips
+            city={filters.city}
+            selected={filters.neighborhoods}
+            onChange={setNeighborhoods}
+          />
+        </View>
       )}
 
-      {/* Tipo de cocina */}
-      <Text style={s.sectionLabel}>TIPO DE COCINA</Text>
-      <View style={s.chipGrid}>
-        {CUISINE_CATEGORIES.map((c) => {
-          const active = filters.cuisines.includes(c);
-          return (
-            <TouchableOpacity
-              key={c}
-              style={[s.chip, active && s.chipActive]}
-              onPress={() => toggleCuisine(c)}
-              activeOpacity={0.75}
-            >
-              <MaterialIcons name={CUISINE_ICONS[c] as any} size={14} color={active ? '#546b00' : '#727973'} />
-              <Text style={[s.chipText, active && s.chipTextActive]}>{c}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
       {/* Precio */}
-      <Text style={s.sectionLabel}>PRECIO</Text>
-      <View style={s.priceRow}>
-        {PRICE_LEVELS.map((p) => {
-          const active = filters.prices.includes(p);
-          return (
-            <TouchableOpacity
-              key={p}
-              style={[s.priceBtn, active && s.priceBtnActive]}
-              onPress={() => togglePrice(p)}
-              activeOpacity={0.75}
-            >
-              <Text style={[s.priceBtnText, active && s.priceBtnTextActive]}>{p}</Text>
-              <Text style={[s.priceDesc, active && { color: '#546b00' }]}>{PRICE_DESCS[p]}</Text>
-            </TouchableOpacity>
-          );
-        })}
+      <View style={s.row}>
+        <Text style={s.sectionLabel}>Precio</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.priceRow}>
+          {PRICE_SYMBOLS.map((p) => {
+            const active = filters.prices.includes(p);
+            return (
+              <TouchableOpacity
+                key={p}
+                style={[s.priceBtn, active && s.priceBtnActive]}
+                onPress={() => togglePrice(p)}
+                activeOpacity={0.75}
+              >
+                <Text style={[s.priceBtnSymbol, active && s.priceBtnSymbolActive]}>{p}</Text>
+                <Text style={[s.priceBtnDesc, active && s.priceBtnDescActive]}>{PRICE_DESCS[p]}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
     </ScrollView>
   );
@@ -114,73 +93,46 @@ export function LocationFilterBar({ filters, onChange }: LocationFilterBarProps)
 
 const s = StyleSheet.create({
   container: { paddingBottom: 8 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 16,
+  },
   sectionLabel: {
-    fontFamily: 'Manrope-ExtraBold',
-    fontSize: 10,
-    color: '#727973',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-    marginBottom: 12,
-    marginTop: 4,
-  },
-  chipGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 24,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: '#f1ede6',
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  chipActive: {
-    backgroundColor: '#c7ef48',
-    borderColor: '#aed52e',
-  },
-  chipText: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 13,
-    color: '#424844',
-  },
-  chipTextActive: {
-    color: '#032417',
     fontFamily: 'Manrope-Bold',
+    fontSize: 12,
+    color: '#727973',
+    paddingTop: 14,
+    width: 48,
+    flexShrink: 0,
   },
   priceRow: {
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
+    gap: 8,
+    paddingRight: 4,
   },
   priceBtn: {
-    flex: 1,
     alignItems: 'center',
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
     backgroundColor: '#f1ede6',
-    borderWidth: 1,
-    borderColor: 'transparent',
-    gap: 4,
+    minWidth: 60,
+    gap: 2,
   },
-  priceBtnActive: {
-    backgroundColor: '#c7ef48',
-    borderColor: '#aed52e',
-  },
-  priceBtnText: {
+  priceBtnActive: { backgroundColor: '#c7ef48' },
+  priceBtnSymbol: {
     fontFamily: 'NotoSerif-Bold',
-    fontSize: 20,
+    fontSize: 15,
     color: '#424844',
   },
-  priceBtnTextActive: { color: '#032417' },
-  priceDesc: {
+  priceBtnSymbolActive: { color: '#032417' },
+  priceBtnDesc: {
     fontFamily: 'Manrope-Medium',
-    fontSize: 10,
+    fontSize: 9,
     color: '#727973',
+    textAlign: 'center',
   },
+  priceBtnDescActive: { color: '#546b00' },
 });

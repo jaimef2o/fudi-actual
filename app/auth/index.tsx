@@ -8,45 +8,94 @@ import {
   KeyboardAvoidingView,
   ActivityIndicator,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useState } from 'react';
+import { MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { signInWithApple, signInWithGoogle } from '../../lib/api/auth';
 
+type AuthMode = 'otp' | 'login' | 'signup';
+
 export default function AuthScreen() {
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [appleLoading, setAppleLoading] = useState(false);
+  const [mode, setMode] = useState<AuthMode>('login');
+  const [email, setEmail]       = useState('');
+  const [password, setPassword] = useState('');
+  const [showPw, setShowPw]     = useState(false);
+  const [loading, setLoading]   = useState(false);
+  const [appleLoading, setAppleLoading]   = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const emailOk   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const passwordOk = password.length >= 6;
   const anyLoading = loading || appleLoading || googleLoading;
 
+  // ── OTP (magic link) ─────────────────────────────────────────────────────
   async function handleSendOTP() {
-    if (!isValid) {
-      Alert.alert('Email inválido', 'Introduce un email válido.');
-      return;
-    }
+    if (!emailOk) { Alert.alert('Email inválido', 'Introduce un email válido.'); return; }
     setLoading(true);
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: { shouldCreateUser: true },
     });
     setLoading(false);
-    if (error) {
-      Alert.alert('Error', error.message);
-      return;
-    }
+    if (error) { Alert.alert('Error', error.message); return; }
     router.push({ pathname: '/auth/verify', params: { email: email.trim() } });
   }
 
+  // ── Email + password login ────────────────────────────────────────────────
+  async function handleLogin() {
+    if (!emailOk || !passwordOk) return;
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    setLoading(false);
+    if (error) {
+      Alert.alert(
+        'Error al iniciar sesión',
+        error.message.includes('Invalid login')
+          ? 'Email o contraseña incorrectos.'
+          : error.message,
+      );
+    }
+    // On success → AuthContext listener redirects to feed automatically
+  }
+
+  // ── Email + password signup ───────────────────────────────────────────────
+  async function handleSignup() {
+    if (!emailOk || !passwordOk) return;
+    setLoading(true);
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: { emailRedirectTo: undefined },
+    });
+    setLoading(false);
+    if (error) {
+      Alert.alert('Error al crear cuenta', error.message);
+      return;
+    }
+    // If user already exists Supabase returns a fake success — handle gracefully
+    if (data.user && !data.session) {
+      Alert.alert(
+        'Confirma tu email',
+        'Te hemos enviado un email de confirmación. Revisa tu bandeja de entrada.',
+      );
+      return;
+    }
+    // New user with session → go to name setup
+    router.replace('/auth/name');
+  }
+
+  // ── Social ────────────────────────────────────────────────────────────────
   async function handleApple() {
     setAppleLoading(true);
     const { error } = await signInWithApple();
     setAppleLoading(false);
     if (error) Alert.alert('Error', error);
-    // On success, _layout.tsx auth listener redirects automatically
   }
 
   async function handleGoogle() {
@@ -56,23 +105,47 @@ export default function AuthScreen() {
     if (error) Alert.alert('Error', error);
   }
 
+  const isOTP    = mode === 'otp';
+  const isLogin  = mode === 'login';
+  const isSignup = mode === 'signup';
+
   return (
     <KeyboardAvoidingView
-      style={styles.root}
+      style={s.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.inner}>
+      <ScrollView
+        contentContainerStyle={s.inner}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         {/* Logo */}
-        <View style={styles.logoBlock}>
-          <Text style={styles.logo}>fudi</Text>
-          <Text style={styles.tagline}>Tu círculo gastronómico</Text>
+        <View style={s.logoBlock}>
+          <Text style={s.logo}>fudi</Text>
+          <Text style={s.tagline}>Tu círculo gastronómico</Text>
         </View>
 
-        {/* Email form */}
-        <View style={styles.form}>
-          <Text style={styles.label}>TU EMAIL</Text>
+        {/* Mode toggle */}
+        <View style={s.modeRow}>
+          {(['login', 'signup', 'otp'] as AuthMode[]).map((m) => (
+            <TouchableOpacity
+              key={m}
+              style={[s.modeBtn, mode === m && s.modeBtnActive]}
+              onPress={() => setMode(m)}
+            >
+              <Text style={[s.modeBtnText, mode === m && s.modeBtnTextActive]}>
+                {m === 'login' ? 'Entrar' : m === 'signup' ? 'Crear cuenta' : 'Código'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Form */}
+        <View style={s.form}>
+          {/* Email */}
+          <Text style={s.label}>EMAIL</Text>
           <TextInput
-            style={styles.input}
+            style={s.input}
             placeholder="nombre@ejemplo.com"
             placeholderTextColor="#c1c8c2"
             keyboardType="email-address"
@@ -80,41 +153,125 @@ export default function AuthScreen() {
             autoCorrect={false}
             value={email}
             onChangeText={setEmail}
-            returnKeyType="done"
-            onSubmitEditing={handleSendOTP}
             editable={!anyLoading}
           />
-          <Text style={styles.hint}>
-            Te enviaremos un código de 6 dígitos para acceder.
-          </Text>
 
-          <TouchableOpacity
-            style={[styles.btn, (!isValid || anyLoading) && styles.btnDisabled]}
-            activeOpacity={0.85}
-            onPress={handleSendOTP}
-            disabled={!isValid || anyLoading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#032417" />
-            ) : (
-              <Text style={styles.btnText}>Continuar →</Text>
-            )}
-          </TouchableOpacity>
+          {/* Password (not in OTP mode) */}
+          {!isOTP && (
+            <>
+              <Text style={[s.label, { marginTop: 4 }]}>CONTRASEÑA</Text>
+              <View style={s.pwRow}>
+                <TextInput
+                  style={[s.input, { flex: 1, marginBottom: 0 }]}
+                  placeholder={isSignup ? 'Mínimo 6 caracteres' : '••••••••'}
+                  placeholderTextColor="#c1c8c2"
+                  secureTextEntry={!showPw}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  value={password}
+                  onChangeText={setPassword}
+                  editable={!anyLoading}
+                  returnKeyType="done"
+                  onSubmitEditing={isLogin ? handleLogin : handleSignup}
+                />
+                <TouchableOpacity
+                  style={s.eyeBtn}
+                  onPress={() => setShowPw((v) => !v)}
+                >
+                  <MaterialIcons
+                    name={showPw ? 'visibility-off' : 'visibility'}
+                    size={20}
+                    color="#727973"
+                  />
+                </TouchableOpacity>
+              </View>
+              {isSignup && (
+                <Text style={s.hint}>
+                  Usa al menos 6 caracteres. Podrás cambiarla desde tu perfil.
+                </Text>
+              )}
+            </>
+          )}
+
+          {isOTP && (
+            <Text style={s.hint}>
+              Te enviaremos un código de 8 dígitos para acceder sin contraseña.
+            </Text>
+          )}
+
+          {/* CTA */}
+          {isOTP ? (
+            <TouchableOpacity
+              style={[s.btn, (!emailOk || anyLoading) && s.btnDisabled]}
+              activeOpacity={0.85}
+              onPress={handleSendOTP}
+              disabled={!emailOk || anyLoading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#032417" />
+              ) : (
+                <Text style={s.btnText}>Enviar código →</Text>
+              )}
+            </TouchableOpacity>
+          ) : isLogin ? (
+            <TouchableOpacity
+              style={[s.btn, (!emailOk || !passwordOk || anyLoading) && s.btnDisabled]}
+              activeOpacity={0.85}
+              onPress={handleLogin}
+              disabled={!emailOk || !passwordOk || anyLoading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#032417" />
+              ) : (
+                <Text style={s.btnText}>Iniciar sesión →</Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[s.btn, (!emailOk || !passwordOk || anyLoading) && s.btnDisabled]}
+              activeOpacity={0.85}
+              onPress={handleSignup}
+              disabled={!emailOk || !passwordOk || anyLoading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#032417" />
+              ) : (
+                <Text style={s.btnText}>Crear cuenta →</Text>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {/* Switch hint */}
+          {isLogin && (
+            <TouchableOpacity onPress={() => setMode('signup')} style={s.switchRow}>
+              <Text style={s.switchText}>
+                ¿Nuevo en fudi?{' '}
+                <Text style={s.switchLink}>Crear cuenta</Text>
+              </Text>
+            </TouchableOpacity>
+          )}
+          {isSignup && (
+            <TouchableOpacity onPress={() => setMode('login')} style={s.switchRow}>
+              <Text style={s.switchText}>
+                ¿Ya tienes cuenta?{' '}
+                <Text style={s.switchLink}>Iniciar sesión</Text>
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* Social sign-in divider */}
-        <View style={styles.dividerRow}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>o continuar con</Text>
-          <View style={styles.dividerLine} />
+        {/* Social divider */}
+        <View style={s.dividerRow}>
+          <View style={s.dividerLine} />
+          <Text style={s.dividerText}>o continuar con</Text>
+          <View style={s.dividerLine} />
         </View>
 
         {/* Social buttons */}
-        <View style={styles.socialRow}>
-          {/* Apple — only on iOS */}
+        <View style={s.socialRow}>
           {Platform.OS === 'ios' && (
             <TouchableOpacity
-              style={styles.socialBtn}
+              style={s.socialBtn}
               activeOpacity={0.8}
               onPress={handleApple}
               disabled={anyLoading}
@@ -123,16 +280,15 @@ export default function AuthScreen() {
                 <ActivityIndicator color="#1c1c18" size="small" />
               ) : (
                 <>
-                  <Text style={styles.socialIcon}></Text>
-                  <Text style={styles.socialLabel}>Apple</Text>
+                  <Text style={s.socialIcon}></Text>
+                  <Text style={s.socialLabel}>Apple</Text>
                 </>
               )}
             </TouchableOpacity>
           )}
 
-          {/* Google */}
           <TouchableOpacity
-            style={[styles.socialBtn, Platform.OS !== 'ios' && { flex: 1 }]}
+            style={[s.socialBtn, Platform.OS !== 'ios' && { flex: 1 }]}
             activeOpacity={0.8}
             onPress={handleGoogle}
             disabled={anyLoading}
@@ -141,131 +297,81 @@ export default function AuthScreen() {
               <ActivityIndicator color="#1c1c18" size="small" />
             ) : (
               <>
-                <Text style={styles.socialIcon}>G</Text>
-                <Text style={styles.socialLabel}>Google</Text>
+                <Text style={s.socialIcon}>G</Text>
+                <Text style={s.socialLabel}>Google</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.legal}>
+        <Text style={s.legal}>
           Al continuar aceptas los Términos de Uso y la Política de Privacidad de fudi.
         </Text>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#fdf9f2',
-  },
-  inner: {
-    flex: 1,
-    paddingHorizontal: 28,
-    justifyContent: 'center',
-    gap: 32,
-  },
-  logoBlock: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  logo: {
-    fontFamily: 'NotoSerif-BoldItalic',
-    fontSize: 52,
-    color: '#032417',
-    letterSpacing: -1,
-  },
-  tagline: {
-    fontFamily: 'Manrope-Medium',
-    fontSize: 15,
-    color: '#727973',
-  },
-  form: {
-    gap: 12,
-  },
+const s = StyleSheet.create({
+  root:  { flex: 1, backgroundColor: '#fdf9f2' },
+  inner: { paddingHorizontal: 28, paddingVertical: 48, gap: 28 },
+
+  logoBlock: { alignItems: 'center', gap: 8 },
+  logo: { fontFamily: 'NotoSerif-BoldItalic', fontSize: 52, color: '#032417', letterSpacing: -1 },
+  tagline: { fontFamily: 'Manrope-Medium', fontSize: 15, color: '#727973' },
+
+  // Mode toggle
+  modeRow: { flexDirection: 'row', backgroundColor: '#f1ede6', borderRadius: 14, padding: 4, gap: 4 },
+  modeBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  modeBtnActive: { backgroundColor: '#ffffff' },
+  modeBtnText: { fontFamily: 'Manrope-SemiBold', fontSize: 13, color: '#727973' },
+  modeBtnTextActive: { color: '#032417' },
+
+  // Form
+  form: { gap: 10 },
   label: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 10,
-    color: '#727973',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
+    fontFamily: 'Manrope-Bold', fontSize: 10,
+    color: '#727973', letterSpacing: 2, textTransform: 'uppercase',
   },
   input: {
-    backgroundColor: '#f7f3ec',
-    borderRadius: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-    fontFamily: 'Manrope-Regular',
-    fontSize: 17,
-    color: '#1c1c18',
+    backgroundColor: '#f7f3ec', borderRadius: 14,
+    paddingHorizontal: 18, paddingVertical: 16,
+    fontFamily: 'Manrope-Regular', fontSize: 17, color: '#1c1c18',
   },
-  hint: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 13,
-    color: '#727973',
-    lineHeight: 19,
+  pwRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  eyeBtn: {
+    backgroundColor: '#f7f3ec', borderRadius: 14,
+    padding: 16, justifyContent: 'center', alignItems: 'center',
   },
+  hint: { fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973', lineHeight: 19 },
+
   btn: {
-    backgroundColor: '#c7ef48',
-    borderRadius: 16,
-    paddingVertical: 18,
-    alignItems: 'center',
-    marginTop: 8,
+    backgroundColor: '#c7ef48', borderRadius: 16,
+    paddingVertical: 18, alignItems: 'center', marginTop: 4,
   },
-  btnDisabled: {
-    backgroundColor: '#e6e2db',
-  },
-  btnText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 16,
-    color: '#032417',
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e6e2db',
-  },
-  dividerText: {
-    fontFamily: 'Manrope-Medium',
-    fontSize: 13,
-    color: '#727973',
-  },
-  socialRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
+  btnDisabled: { backgroundColor: '#e6e2db' },
+  btnText: { fontFamily: 'Manrope-Bold', fontSize: 16, color: '#032417' },
+
+  switchRow: { alignItems: 'center', paddingVertical: 4 },
+  switchText: { fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973' },
+  switchLink: { fontFamily: 'Manrope-Bold', color: '#032417' },
+
+  // Divider
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#e6e2db' },
+  dividerText: { fontFamily: 'Manrope-Medium', fontSize: 13, color: '#727973' },
+
+  // Social
+  socialRow: { flexDirection: 'row', gap: 12 },
   socialBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    backgroundColor: '#f7f3ec',
-    borderRadius: 14,
-    paddingVertical: 15,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 10, backgroundColor: '#f7f3ec', borderRadius: 14, paddingVertical: 15,
   },
-  socialIcon: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 16,
-    color: '#1c1c18',
-  },
-  socialLabel: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 15,
-    color: '#1c1c18',
-  },
+  socialIcon: { fontFamily: 'Manrope-Bold', fontSize: 16, color: '#1c1c18' },
+  socialLabel: { fontFamily: 'Manrope-SemiBold', fontSize: 15, color: '#1c1c18' },
+
   legal: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 11,
-    color: '#c1c8c2',
-    textAlign: 'center',
-    lineHeight: 17,
+    fontFamily: 'Manrope-Regular', fontSize: 11,
+    color: '#c1c8c2', textAlign: 'center', lineHeight: 17,
   },
 });

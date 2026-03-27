@@ -18,6 +18,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '../../store';
 import { supabase } from '../../lib/supabase';
 import { pickImage, compressAndUpload } from '../../lib/storage';
+import { CityPicker } from '../../components/CityPicker';
 import {
   validateHandleFormat,
   isHandleAvailable,
@@ -28,12 +29,15 @@ type HandleStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'u
 export default function EditProfileScreen() {
   const currentUser = useAppStore((s) => s.currentUser);
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
+  const showToast = useAppStore((s) => s.showToast);
   const queryClient = useQueryClient();
 
   const [name, setName] = useState('');
   const [handle, setHandle] = useState('');
   const [originalHandle, setOriginalHandle] = useState('');
   const [bio, setBio] = useState('');
+  const [city, setCity] = useState('');
+  const [email, setEmail] = useState('');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [newAvatarUri, setNewAvatarUri] = useState<string | null>(null); // local URI before upload
 
@@ -44,12 +48,15 @@ export default function EditProfileScreen() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load current profile data
+  // Load current profile data + email from auth
   useEffect(() => {
     if (!currentUser?.id) return;
+    supabase.auth.getUser().then(({ data: authData }) => {
+      if (authData.user?.email) setEmail(authData.user.email);
+    });
     supabase
       .from('users')
-      .select('name, handle, bio, avatar_url')
+      .select('name, handle, bio, city, avatar_url')
       .eq('id', currentUser.id)
       .single()
       .then(({ data }) => {
@@ -58,6 +65,7 @@ export default function EditProfileScreen() {
           setHandle((data as any).handle ?? '');
           setOriginalHandle((data as any).handle ?? '');
           setBio((data as any).bio ?? '');
+          setCity((data as any).city ?? '');
           setAvatarUri((data as any).avatar_url ?? null);
         }
         setLoadingProfile(false);
@@ -125,6 +133,7 @@ export default function EditProfileScreen() {
         name: name.trim(),
         handle: handle.trim(),
         bio: bio.trim(),
+        city: city.trim(),
       };
       if (avatarUrl) updates.avatar_url = avatarUrl;
 
@@ -145,9 +154,8 @@ export default function EditProfileScreen() {
       // Invalidate TanStack Query cache so profile screen shows updated data immediately
       queryClient.invalidateQueries({ queryKey: ['profile', currentUser.id] });
 
-      Alert.alert('¡Perfil actualizado!', 'Tus cambios se han guardado correctamente.', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      showToast('Perfil actualizado');
+      router.back();
     } catch (e: any) {
       if (e?.code === '23505') {
         setHandleStatus('taken');
@@ -200,6 +208,7 @@ export default function EditProfileScreen() {
         contentContainerStyle={styles.inner}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        automaticallyAdjustKeyboardInsets
       >
         {/* Avatar */}
         <View style={styles.avatarSection}>
@@ -217,6 +226,21 @@ export default function EditProfileScreen() {
           </TouchableOpacity>
           <Text style={styles.avatarHint}>Toca para cambiar la foto</Text>
         </View>
+
+        {/* Email — read only */}
+        {email ? (
+          <View style={styles.field}>
+            <Text style={styles.label}>EMAIL</Text>
+            <View style={[styles.input, { justifyContent: 'center', backgroundColor: '#f1ede6' }]}>
+              <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 15, color: '#727973' }}>
+                {email}
+              </Text>
+            </View>
+            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 11, color: '#c1c8c2', marginTop: 4 }}>
+              El email no se puede cambiar desde aquí.
+            </Text>
+          </View>
+        ) : null}
 
         {/* Name */}
         <View style={styles.field}>
@@ -285,7 +309,17 @@ export default function EditProfileScreen() {
           </Text>
         </View>
 
-        <View style={{ height: 40 }} />
+        {/* City */}
+        <View style={[styles.field, { zIndex: 20 }]}>
+          <Text style={styles.label}>CIUDAD</Text>
+          <CityPicker
+            value={city}
+            onChange={setCity}
+            placeholder="Tu ciudad base..."
+          />
+        </View>
+
+        <View style={{ height: 320 }} />
       </ScrollView>
     </KeyboardAvoidingView>
   );

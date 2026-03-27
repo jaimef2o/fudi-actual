@@ -7,155 +7,135 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
+  Share,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppStore } from '../../store';
 import {
   useRestaurant,
   useRestaurantStats,
-  useFriendDishes,
   useRecentVisits,
+  useRelevantRestaurantIds,
+  useFriendStats,
 } from '../../lib/hooks/useRestaurant';
 import { useBookmark } from '../../lib/hooks/useVisit';
+import { InfoTag } from '../../components/InfoTag';
+import { scorePalette } from '../../lib/sentimentColors';
 
-const IMG_REST = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCwTgROq2RTEr8n6fVTKzoBQV7JfU3c_sY4jT7drdus_7SG7VK_GDkPfoyvqqFpNVTSjPyyJP7uy8GIb-uucfjWFUkLo6pmTNi2HEdmjfS67bpoNR5aXYsOqXFJJaHFtOCbXHngWzQyoYsh8MKqsWZt_jfSBerWY6eHybkfvS6GC-PnCSCKN5WTjBUV4k5pWv71zG0WfXO-fGL840en1AeqUoTNRupaLzyr_FsbgXImTGDQ7-FJGvAd7ZEKtPfb7CBs5kgZo3iQwWY';
-const IMG_COCHINILLO = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCMZV_WojyxnnP3GhLLKT3PyPXUA4X4dGId_1sI2dmcgKEvOqZrcveLcwiBp5qrxM6xcjkRWMiU9jiQhigjDD-NQrWB841h1nnGmiWbuFQpJUF4uB1n9IcfJK5PNA0kE3_0IpEzcxoNVNyUR-YG5lu0Wg50eU5-X_DiEBU6j9iR1vUM-1s2BSYwVoCsUXLgUUZptGLzC-AhCBhMGtk_6ndHDeFN4BglfimU2LiYx6S575Gf6WsVaRl6XA1ZYQElIa4DHxTDMH-ooFQ';
-const IMG_CORDERO = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDrPJnME-zs4KV1PEEliIuSWe6we9KkGSbUGhTQiQcaZXYwYpA-5GRngMYWhO5m9b6yFQGT9M4KbYC7JoNk8MUR1PrW0cYbU7LA7LWa9p06CbxySXXsfTL3nZ8KYsjERF98EudAOvUXr5i_5lw-roDBFX1Hg9OniEVA2H7gTUnXGKlFnioFYdq4uKOcd-XWZVOEXBAe_pLIFsnFqf-pF3X8_Bce6XA5UANSViVfK0W0tbcCdur48r5wzgMEeY623Zv9BOo4wZMUE';
-const IMG_SOPA = 'https://lh3.googleusercontent.com/aida-public/AB6AXuB8Qxcy6TTA1owp6bBozdPnOYIEbT09tO8Ajleq8u1uU2TH6pOkqvEZZZbm9o1TdVl-yvrOB1SS9oX1FGgCCtc4ZT_nZdAgLrgbrgRUQzhrMMrp4thOzOMvGHRTxnc7cRqlJj75sMpQ6bI2z66UdwnUVTz5LSrRY573zXxpInss3o1SqnVadPFbeTGzrGk8DlXeBwKPqt_HKS7CacEol3kNHMxGl1LcSqgBcL2tzaJo77WuUna_shLBnz5cs-L8Hyt_UgydNV1s3Bk';
-const AVT_ELENA = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCshqfu17SkfytNBsWvHTdZVFJvD1d36xezrVplFXfKngGJhcR--knUcvVfnmBc9QpAb4hz8EeilLUFRPXWC-3bjNa5e0OA6jrVKCdsnp_GF8ZDzIF9LuUmJP56qgJxGpuGZOm9p7HVyyVKzdu_KgA33Ouf2zEPg-y8nUOqImFccdQI2lk3cHmwTTVn6tjTIFFRv86E80NKtE2ywkJ58gZ5DBaBQBZC2uBUNxv-eBK7C-Pa687xheadVznM3v1JpygDryc11HD-d5U';
-const AVT_MARCOS = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDYcqNp6jVFXZXm4aMdDlZQggdphR4UYfjTVE_CETMzDn9gCZkT3aHm8Otgmb4OZTZ2H39MnGN1bIp1buJMqVUqShadC-AQ2v_N7Y3A-qP_BMSM4-5Ra8191d6dF-zP_2LJeMQdvQkjuMyYArFrDWcP8kV1RuamQpUAzoZypKRCXOww_HEKkyh7Q2ECt4kXQRMDgMYscmij1hpIRV9dxk_0xP3do6hhfqCtIyQ4m418nWqGl93AfUwOTvmbzbcBy7zgMN2z_PSB42s';
-const AVT_JAVIER = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCAFdDwvquATLmpsLf8yzCu7IVfZaYZL2NBqWCZvEyAV0fCCBjeS6gr4LXlclF_7aPXTfuWNmsDcY_Po1nP1RT7Q7yOllSvdJ76fhD1vgsgvg6D9LuO41CudDHbvfcVVZPuTxXW4X4QHcbd4mM5McSBaduhW6RhJ4yEFU6TLMexQz2WWwL8_53xmXEHqc5jHXeNFSo9qFWcBfy9BrxEUvfqPlcCYIBY4k2XKfa-X3Y3fErrYK6zO_XWM39beb0Z9MsE9W6aA9HwiPY';
-const AVT_SOFIA = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCT6XkKRCDK0V3jy8EP6N74OA0WAFokkdSIG6fiBIVjKr8CsbFEztT-Lc7YhEG1kn3GvdcHqUEQ2B0e5N9oKrO15B65RDjhNi0wOqktuIAK0ReJojw2_hN7VtUb_verbMOpA0GLeHesiBcSmAU9n2zyabfzAAJGuAEniAQ7ZzBZemRLLeAN6Z6KUF7u8xQD93sdvebl106OhL7M7Z2xgDR-pJAWCb6ZiayyRjsvfqyJbZbPyWtvRiUJmGCYf739YqCFYYdqcEtBWZo';
-const AVT_CARLOS = 'https://lh3.googleusercontent.com/aida-public/AB6AXuBY_P8WAwGdtqJnDEfmkWwGtMEBxK_q75-e3WPeq3eJtCZ9hvBphNe8kNaM-xp6PnisryCyvD2VhhMwd6E4QEhzEdq0k6WoCRGXgFAr-yZybHU-kOnwrGLaKlcPke2b-9-SlUxxBHIFI6nUVRXrQ9DnrhC9Mxf15r8ZbBeahLaqzBoCWyNbE3LZCNAr_UhXId5-GXgJ9NiaOxkNb1HrVw8S-MxnHnWArARJccpyQiTNC1OrPdqWpdA_SeKxMihbbi2TqlfhHmJUYVE';
+function timeAgo(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `hace ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `hace ${hrs}h`;
+  return `hace ${Math.floor(hrs / 24)}d`;
+}
 
-// Lookup for name/neighborhood by ID (all IDs used across mock data)
-const RESTAURANT_META: Record<string, { name: string; neighborhood: string; cuisine: string }> = {
-  '1': { name: 'Casa Botín', neighborhood: 'La Latina · Madrid', cuisine: 'Cocina Castellana' },
-  '2': { name: 'Sala Equis', neighborhood: 'El Rastro · Madrid', cuisine: 'Mediterránea' },
-  '3': { name: 'DiverXO', neighborhood: 'Tetuán · Madrid', cuisine: 'Alta Cocina' },
-  '4': { name: 'Sacha', neighborhood: 'Almagro · Madrid', cuisine: 'Cocina de Autor' },
-  '5': { name: 'El Celler de Can Roca', neighborhood: 'Girona', cuisine: 'Alta Cocina' },
-  '6': { name: 'Brasas & Sal', neighborhood: 'Chueca · Madrid', cuisine: 'Carne & Parrilla' },
-  '7': { name: 'El Rincón de Lavapiés', neighborhood: 'Lavapiés · Madrid', cuisine: 'Española & Tapas' },
-  '8': { name: 'Taberna Veracruz', neighborhood: 'Huertas · Madrid', cuisine: 'Mexicana' },
-};
-
-const RESTAURANT_DATA = {
-  id: '1',
-  name: 'Casa Botín',
-  cuisine: 'Cocina Castellana',
-  priceLevel: '€€',
-  address: 'Calle de Cuchilleros, 17',
-  neighborhood: 'La Latina · Madrid',
-  image: IMG_REST,
-
-  // Amigos
-  friendScore: 8.8,
-  friendVisits: 42,
-  friendSaved: 128,
-  friendDishes: [
-    {
-      id: '1',
-      name: 'Cochinillo asado',
-      note: 'La piel crujiente y la carne se deshace',
-      image: IMG_COCHINILLO,
-      friendsCount: 8,
-      friendAvatars: [AVT_JAVIER, AVT_ELENA, AVT_MARCOS],
-    },
-    {
-      id: '2',
-      name: 'Cordero lechal asado',
-      note: 'Cocinado durante 8 horas a baja temperatura',
-      image: IMG_CORDERO,
-      friendsCount: 5,
-      friendAvatars: [AVT_SOFIA, AVT_CARLOS],
-    },
-    {
-      id: '3',
-      name: 'Sopa castellana',
-      note: 'El clásico reconfortante de la casa',
-      image: IMG_SOPA,
-      friendsCount: 3,
-      friendAvatars: [AVT_ELENA],
-    },
-  ],
-  recentVisits: [
-    { visitId: '1', name: 'Lucía Moreno', timeAgo: 'hace 3 días', score: 9.5, avatar: AVT_ELENA, dish: 'Cochinillo asado' },
-    { visitId: '2', name: 'Marcos Pérez', timeAgo: 'hace 1 semana', score: 8.0, avatar: AVT_MARCOS, dish: 'Cordero lechal' },
-    { visitId: '3', name: 'Sonia G.', timeAgo: 'hace 2 semanas', score: 8.8, avatar: AVT_SOFIA, dish: 'Cochinillo asado' },
-    { visitId: '4', name: 'Carlos R.', timeAgo: 'hace 3 semanas', score: 9.2, avatar: AVT_CARLOS, dish: 'Sopa castellana' },
-    { visitId: '5', name: 'Javier R.', timeAgo: 'hace 1 mes', score: 8.5, avatar: AVT_JAVIER, dish: 'Cordero lechal' },
-  ],
-
-  // Global
-  globalScore: 9.1,
-  globalVisits: 12400,
-  globalSaved: 45200,
-  globalDishes: [
-    { id: '1', name: 'Cochinillo asado', note: 'El plato más emblemático del restaurante', image: IMG_COCHINILLO, totalOrders: 8420 },
-    { id: '2', name: 'Cordero lechal asado', note: 'Cocinado durante 8 horas a baja temperatura', image: IMG_CORDERO, totalOrders: 6100 },
-    { id: '3', name: 'Sopa castellana', note: 'El clásico reconfortante de la casa', image: IMG_SOPA, totalOrders: 3800 },
-  ],
-};
+function RelationLabel({ isMutual }: { isMutual: boolean }) {
+  return (
+    <View style={{
+      backgroundColor: isMutual ? 'rgba(199,239,72,0.40)' : '#ebe8e1',
+      borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
+    }}>
+      <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 10, color: isMutual ? '#546b00' : '#424844' }}>
+        {isMutual ? 'Amigo' : 'Siguiendo'}
+      </Text>
+    </View>
+  );
+}
 
 export default function RestaurantScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [mode, setMode] = useState<'amigos' | 'global'>('amigos');
   const [isFavorited, setIsFavorited] = useState(false);
   const currentUser = useAppStore((s) => s.currentUser);
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
 
-  const { data: restaurant, isLoading: loadingRest } = useRestaurant(id);
-  const { data: stats } = useRestaurantStats(id);
-  const { data: friendDishes } = useFriendDishes(id, currentUser?.id);
-  const { data: recentVisits } = useRecentVisits(id, currentUser?.id);
+  const { data: restaurant, isLoading: loadingRest, isError: restaurantError } = useRestaurant(id);
+  const { data: globalStats } = useRestaurantStats(id);
+  const { data: chainData } = useRelevantRestaurantIds(id);
+  const relevantIds = chainData?.ids;
+  const { data: friendStatsData } = useFriendStats(relevantIds, currentUser?.id);
+  const { data: recentVisits = [] } = useRecentVisits(relevantIds, currentUser?.id);
 
-  // Merge real data with mock fallback for display
-  const meta = RESTAURANT_META[id ?? '1'] ?? {};
-  const mockData = { ...RESTAURANT_DATA, ...meta };
+  const isChain = (relevantIds?.length ?? 0) > 1;
+  const displayName = chainData?.brandName ?? restaurant?.name ?? '—';
+  const locationDisplay = isChain ? 'Múltiples ubicaciones' : (restaurant?.neighborhood ?? restaurant?.city ?? null);
+  const cuisine = (restaurant as any)?.cuisine as string | null ?? null;
+  const priceLevel = (restaurant as any)?.price_level as string | null ?? null;
+  const coverImage = (restaurant as any)?.cover_image_url as string | null ?? null;
 
-  const name = restaurant?.name ?? mockData.name;
-  const neighborhood = restaurant?.neighborhood ?? mockData.neighborhood;
-  const cuisine = restaurant?.cuisine ?? mockData.cuisine;
-  const coverImage = restaurant?.cover_image_url ?? mockData.image;
-  const priceLevel = restaurant?.price_level
-    ? ['', '€', '€€', '€€€', '€€€€'][restaurant.price_level] ?? '€€'
-    : mockData.priceLevel;
+  const friendScore = friendStatsData?.friendScore ?? null;
+  const friendVisitCount = friendStatsData?.friendVisitCount ?? 0;
+  const friendSavedCount = friendStatsData?.friendSavedCount ?? 0;
+  const globalScore = globalStats?.avg_score ?? null;
+  const globalVisitCount = globalStats?.visit_count ?? 0;
+  const savedCount = globalStats?.saved_count ?? 0;
 
-  const score = stats?.avg_score ?? (mode === 'amigos' ? mockData.friendScore : mockData.globalScore);
-  const visits = stats?.visit_count ?? (mode === 'amigos' ? mockData.friendVisits : mockData.globalVisits);
-  const saved = stats?.saved_count ?? (mode === 'amigos' ? mockData.friendSaved : mockData.globalSaved);
-  const scoreLabel = mode === 'amigos' ? 'media amigos' : 'media fudi';
+  const hasFriendData = friendVisitCount > 0 || !!friendScore;
+  const [metricsMode, setMetricsMode] = useState<'friends' | 'global'>('friends');
 
-  const displayDishes = (friendDishes && friendDishes.length > 0)
-    ? friendDishes.map((d: any, idx: number) => ({
-        id: String(idx),
-        name: d.dish_name,
-        note: `Pedido por ${d.times_ordered} ${d.times_ordered === 1 ? 'amigo' : 'amigos'}`,
-        image: d.photo_url ?? mockData.friendDishes[0]?.image ?? '',
-        friendsCount: d.friends?.length ?? d.times_ordered,
-        friendAvatars: (d.friends ?? []).slice(0, 3).map((f: any) => f.avatar_url).filter(Boolean),
-      }))
-    : mockData.friendDishes;
+  // Auto-switch to global if friend data loaded and there's none
+  useEffect(() => {
+    if (friendStatsData && !hasFriendData) setMetricsMode('global');
+  }, [friendStatsData, hasFriendData]);
 
-  const displayVisits = (recentVisits && recentVisits.length > 0)
-    ? recentVisits.map((v: any) => ({
-        visitId: v.id,
-        name: v.user?.name ?? 'Usuario',
-        timeAgo: v.visited_at ? `hace ${Math.floor((Date.now() - new Date(v.visited_at).getTime()) / 86400000)}d` : '',
-        score: v.rank_score ?? 8.0,
-        avatar: v.user?.avatar_url ?? '',
-        dish: '',
-      }))
-    : mockData.recentVisits;
+  // Visitors with avatars for the visit tile
+  const friendVisitors = (recentVisits as any[]).filter((v) => v.is_mutual).slice(0, 3);
+
+  const friendPal = scorePalette(friendScore);
 
   if (loadingRest) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#fdf9f2', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#032417" />
+      <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
+            <MaterialIcons name="arrow-back" size={24} color="#032417" />
+          </TouchableOpacity>
+          <View style={{ width: 120, height: 18, backgroundColor: '#e6e2db', borderRadius: 8 }} />
+          <View style={{ width: 40 }} />
+        </View>
+        {/* Skeleton hero */}
+        <View style={{ height: 320, backgroundColor: '#e6e2db' }} />
+        <View style={{ paddingHorizontal: 20, paddingTop: 24, gap: 12 }}>
+          <View style={{ height: 16, width: '60%', backgroundColor: '#e6e2db', borderRadius: 8 }} />
+          <View style={{ height: 12, width: '40%', backgroundColor: '#f1ede6', borderRadius: 8 }} />
+          <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+            {[1,2,3].map(i => <View key={i} style={{ flex: 1, height: 64, backgroundColor: '#f1ede6', borderRadius: 14 }} />)}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // Only show "not found" when the query definitively finished with no data (not an error/network issue)
+  if (!loadingRest && !restaurantError && !restaurant) {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
+            <MaterialIcons name="arrow-back" size={24} color="#032417" />
+          </TouchableOpacity>
+          <Text style={s.headerTitle}>Restaurante</Text>
+          <View style={{ width: 40 }} />
+        </View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32 }}>
+          <MaterialIcons name="restaurant" size={52} color="#c1c8c2" />
+          <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417', textAlign: 'center' }}>
+            Restaurante no encontrado
+          </Text>
+          <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center' }}>
+            Este restaurante no está en nuestra base de datos todavía.
+          </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: '#032417', borderRadius: 999, paddingVertical: 12, paddingHorizontal: 24, marginTop: 8 }}
+            onPress={() => router.back()}
+          >
+            <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>Volver</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -163,259 +143,296 @@ export default function RestaurantScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
       {/* Fixed Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
           <MaterialIcons name="arrow-back" size={24} color="#032417" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>{name}</Text>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={async () => {
-            const next = !isFavorited;
-            setIsFavorited(next); // optimistic
-            try {
-              if (id && currentUser?.id) {
-                await toggleBookmark({ restaurantId: id, save: next });
-              }
-            } catch {
-              setIsFavorited(!next); // revert on error
-            }
-          }}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons
-            name={isFavorited ? 'favorite' : 'favorite-border'}
-            size={24}
-            color={isFavorited ? '#c7ef48' : '#032417'}
-          />
-        </TouchableOpacity>
+        <Text style={s.headerTitle} numberOfLines={1}>{displayName}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <TouchableOpacity
+            style={s.headerBtn}
+            onPress={() => Share.share({ title: displayName, message: `Echa un vistazo a ${displayName} en fudi 🍽️` })}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="ios-share" size={22} color="#032417" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.headerBtn}
+            onPress={async () => {
+              const next = !isFavorited;
+              setIsFavorited(next);
+              try {
+                if (id && currentUser?.id) await toggleBookmark({ restaurantId: id, save: next });
+              } catch { setIsFavorited(!next); }
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons
+              name={isFavorited ? 'favorite' : 'favorite-border'}
+              size={24}
+              color={isFavorited ? '#c7ef48' : '#032417'}
+            />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Hero */}
-        <View style={styles.hero}>
-          <Image
-            source={{ uri: coverImage }}
-            style={StyleSheet.absoluteFillObject}
-            resizeMode="cover"
-          />
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.scroll}>
+        {/* ── SECCIÓN 1: HERO ── */}
+        <View style={s.hero}>
+          {coverImage ? (
+            <Image source={{ uri: coverImage }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+          ) : (
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#1a3a2b', alignItems: 'center', justifyContent: 'center' }]}>
+              <MaterialIcons name="restaurant" size={64} color="rgba(199,239,72,0.2)" />
+            </View>
+          )}
           <LinearGradient
-            colors={['transparent', 'rgba(3,36,23,0.92)']}
-            style={styles.heroOverlay}
+            colors={['transparent', 'rgba(3,36,23,0.50)', 'rgba(3,36,23,0.92)']}
+            style={s.heroGradient}
           />
-
-          {/* Toggle */}
-          <View style={styles.toggleWrapper}>
-            <View style={styles.toggle}>
-              <TouchableOpacity
-                style={[styles.toggleBtn, mode === 'amigos' && styles.toggleBtnActive]}
-                onPress={() => setMode('amigos')}
-              >
-                <Text style={[styles.toggleText, mode === 'amigos' && styles.toggleTextActive]}>
-                  Amigos
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggleBtn, mode === 'global' && styles.toggleBtnActive]}
-                onPress={() => setMode('global')}
-              >
-                <Text style={[styles.toggleText, mode === 'global' && styles.toggleTextActive]}>
-                  Global
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Hero info */}
-          <View style={styles.heroInfo}>
-            <View style={styles.heroScoreBadge}>
-              <Text style={styles.heroScoreText}>{score.toFixed(1)}</Text>
-              <Text style={styles.heroScoreLabel}>{scoreLabel}</Text>
-            </View>
-            <Text style={styles.heroName}>{name}</Text>
-            <View style={styles.heroMeta}>
-              <MaterialIcons name="location-on" size={14} color="rgba(255,255,255,0.8)" />
-              <Text style={styles.heroMetaText}>{neighborhood}</Text>
-              <Text style={styles.heroMetaDot}>·</Text>
-              <Text style={styles.heroMetaText}>{cuisine}</Text>
-              <Text style={styles.heroMetaDot}>·</Text>
-              <Text style={styles.heroMetaText}>{priceLevel}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Bento stats */}
-        <View style={styles.bentoGrid}>
-          <View style={styles.bentoCell}>
-            <Text style={styles.bentoCellValue}>{visits.toLocaleString()}</Text>
-            <Text style={styles.bentoCellLabel}>VISITAS</Text>
-          </View>
-          <View style={styles.bentoCell}>
-            <Text style={styles.bentoCellValue}>{saved.toLocaleString()}</Text>
-            <Text style={styles.bentoCellLabel}>GUARDADOS</Text>
-          </View>
-          <View style={[styles.bentoCell, styles.bentoCellHighlight]}>
-            <Text style={[styles.bentoCellValue, styles.bentoCellValueHighlight]}>
-              {score.toFixed(1)}
-            </Text>
-            <Text style={[styles.bentoCellLabel, styles.bentoCellLabelHighlight]}>
-              {mode === 'amigos' ? 'AMIGOS' : 'GLOBAL'}
-            </Text>
-          </View>
-        </View>
-
-        {/* ── AMIGOS MODE ── */}
-        {mode === 'amigos' && (
-          <>
-            {/* Lo que piden tus amigos */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <MaterialIcons name="people" size={20} color="#032417" />
-                <Text style={styles.sectionTitle}>Lo que piden tus amigos</Text>
-              </View>
-              <View style={styles.dishesList}>
-                {displayDishes.map((dish, idx) => (
-                  <View key={dish.id} style={styles.dishItem}>
-                    <View style={styles.dishRankBadge}>
-                      <Text style={styles.dishRankText}>#{idx + 1}</Text>
-                    </View>
-                    {dish.image ? (
-                      <Image source={{ uri: dish.image }} style={styles.dishImage} />
-                    ) : (
-                      <View style={[styles.dishImage, { backgroundColor: '#f1ede6', alignItems: 'center', justifyContent: 'center' }]}>
-                        <MaterialIcons name="restaurant-menu" size={28} color="#c1c8c2" />
-                      </View>
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.dishName}>{dish.name}</Text>
-                      <Text style={styles.dishNote}>{dish.note}</Text>
-                      <View style={styles.dishAvatarRow}>
-                        {(dish.friendAvatars ?? []).filter(Boolean).map((a: any, i: number) => (
-                          <Image
-                            key={i}
-                            source={{ uri: a }}
-                            style={[styles.dishAvatar, { marginLeft: i > 0 ? -8 : 0 }]}
-                          />
-                        ))}
-                        <Text style={styles.dishFriendsText}>
-                          {dish.friendsCount} amigos
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            </View>
-
-            {/* Visitas recientes de amigos */}
-            <View style={styles.visitsSection}>
-              <Text style={styles.visitsSectionTitle}>Visitas recientes</Text>
-              <Text style={styles.visitsSectionSubtitle}>
-                Últimas visitas de tu círculo
+          <View style={s.heroInfo}>
+            {locationDisplay ? (
+              <Text style={{ fontFamily: 'Manrope-ExtraBold', fontSize: 10, color: '#c7ef48', textTransform: 'uppercase', letterSpacing: 3, marginBottom: 6 }}>
+                {locationDisplay}
               </Text>
-              <View style={styles.visitsList}>
-                {displayVisits.map((visit: any, i: number) => (
+            ) : null}
+            <Text style={s.heroName}>{displayName}</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 8 }}>
+              <InfoTag value={cuisine} />
+              <InfoTag value={priceLevel} />
+            </View>
+          </View>
+        </View>
+
+        {/* ── SECCIÓN 2: STATS ── */}
+        <View style={s.statsWrapper}>
+          <View style={s.statsCard}>
+            {/* Header: title + Amigos/Global toggle */}
+            <View style={s.statsCardHeader}>
+              <Text style={s.statsCardTitle}>Tu círculo</Text>
+              <View style={s.metricsToggle}>
+                <TouchableOpacity
+                  style={[s.metricsToggleBtn, metricsMode === 'friends' && s.metricsToggleBtnActive]}
+                  onPress={() => setMetricsMode('friends')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[s.metricsToggleText, metricsMode === 'friends' && s.metricsToggleTextActive]}>
+                    Amigos
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.metricsToggleBtn, metricsMode === 'global' && s.metricsToggleBtnActive]}
+                  onPress={() => setMetricsMode('global')}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[s.metricsToggleText, metricsMode === 'global' && s.metricsToggleTextActive]}>
+                    Global
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Three metric tiles */}
+            <View style={s.statsRow}>
+              {/* ── Media ── */}
+              <View style={s.statCell}>
+                {(() => {
+                  const val = metricsMode === 'friends' ? friendScore : globalScore;
+                  const isHigh = val !== null && val >= 7.5;
+                  const color = val === null ? '#c1c8c2' : isHigh ? '#516600' : '#032417';
+                  const isFriend = metricsMode === 'friends' && !!friendScore;
+                  const isLow = metricsMode === 'global' && globalVisitCount > 0 && globalVisitCount < 3;
+                  return (
+                    <>
+                      <Text style={[s.statValue, { color }]}>
+                        {val !== null ? val.toFixed(1) : '—'}
+                      </Text>
+                      <Text style={s.statLabel}>
+                        {isLow ? 'POCOS DATOS' : 'MEDIA'}
+                      </Text>
+                      <Text style={[s.statSub, { color: isFriend ? '#546b00' : '#9ea8a0' }]}>
+                        {isFriend ? 'de amigos' : 'en fudi'}
+                      </Text>
+                    </>
+                  );
+                })()}
+              </View>
+
+              <View style={s.statDivider} />
+
+              {/* ── Visitas ── */}
+              <View style={s.statCell}>
+                {(() => {
+                  const val = metricsMode === 'friends'
+                    ? (friendVisitCount > 0 ? friendVisitCount : null)
+                    : (globalVisitCount > 0 ? globalVisitCount : null);
+                  const isFriend = metricsMode === 'friends' && friendVisitCount > 0;
+                  return (
+                    <>
+                      {/* Avatar stack when showing friend visits */}
+                      {isFriend && friendVisitors.length > 0 && (
+                        <View style={s.avatarStack}>
+                          {friendVisitors.map((v: any, i: number) =>
+                            v.user?.avatar_url ? (
+                              <Image
+                                key={v.id ?? i}
+                                source={{ uri: v.user.avatar_url }}
+                                style={[s.stackAvatar, { marginLeft: i > 0 ? -7 : 0 }]}
+                              />
+                            ) : (
+                              <View key={v.id ?? i} style={[s.stackAvatar, s.stackAvatarPlaceholder, { marginLeft: i > 0 ? -7 : 0 }]}>
+                                <MaterialIcons name="person" size={8} color="#727973" />
+                              </View>
+                            )
+                          )}
+                          {friendVisitCount > 3 && (
+                            <View style={[s.stackAvatar, s.stackAvatarMore, { marginLeft: -7 }]}>
+                              <Text style={s.stackAvatarMoreText}>+{friendVisitCount - 3}</Text>
+                            </View>
+                          )}
+                        </View>
+                      )}
+                      <Text style={[s.statValue, { color: val !== null ? '#032417' : '#c1c8c2' }]}>
+                        {val !== null ? val : '—'}
+                      </Text>
+                      <Text style={s.statLabel}>VISITAS</Text>
+                      <Text style={[s.statSub, { color: isFriend ? '#546b00' : '#9ea8a0' }]}>
+                        {isFriend ? 'de amigos' : 'en fudi'}
+                      </Text>
+                    </>
+                  );
+                })()}
+              </View>
+
+              <View style={s.statDivider} />
+
+              {/* ── Guardados ── */}
+              <View style={s.statCell}>
+                {(() => {
+                  const val = metricsMode === 'friends'
+                    ? (friendSavedCount > 0 ? friendSavedCount : null)
+                    : (savedCount > 0 ? savedCount : null);
+                  const isFriend = metricsMode === 'friends' && friendSavedCount > 0;
+                  return (
+                    <>
+                      <Text style={[s.statValue, { color: val !== null ? '#032417' : '#c1c8c2' }]}>
+                        {val !== null ? val : '—'}
+                      </Text>
+                      <Text style={s.statLabel}>GUARDADOS</Text>
+                      <Text style={[s.statSub, { color: isFriend ? '#546b00' : '#9ea8a0' }]}>
+                        {isFriend ? 'de amigos' : 'en fudi'}
+                      </Text>
+                    </>
+                  );
+                })()}
+              </View>
+            </View>
+
+            {/* Empty friend state */}
+            {metricsMode === 'friends' && !hasFriendData && (
+              <View style={s.statsEmptyFriends}>
+                <MaterialIcons name="group-add" size={14} color="#c1c8c2" />
+                <Text style={s.statsEmptyText}>Ningún amigo ha visitado aún</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* ── SECCIÓN 3: VISITAS RECIENTES ── */}
+        <View style={s.visitsSection}>
+          <Text style={s.sectionTitle}>
+            {(recentVisits as any[]).some((v) => v.is_mutual)
+              ? 'Lo que dicen tus amigos'
+              : 'Visitas recientes en fudi'}
+          </Text>
+          {(recentVisits as any[]).length === 0 ? (
+            <View style={s.emptyState}>
+              <MaterialIcons name="people" size={32} color="#c1c8c2" />
+              <Text style={s.emptyText}>Ningún amigo ha visitado este restaurante aún</Text>
+            </View>
+          ) : (
+            <View style={s.visitsList}>
+              {(recentVisits as any[]).slice(0, 5).map((visit, i) => {
+                const pal = scorePalette(visit.rank_score);
+                return (
                   <TouchableOpacity
-                    key={visit.visitId}
-                    style={[styles.visitItem, i < displayVisits.length - 1 && styles.visitItemBorder]}
+                    key={visit.id}
+                    style={[s.visitCard, i < Math.min((recentVisits as any[]).length, 5) - 1 && s.visitCardBorder]}
                     activeOpacity={0.75}
-                    onPress={() => router.push(`/visit/${visit.visitId}`)}
+                    onPress={() => router.push(`/visit/${visit.id}`)}
                   >
-                    {visit.avatar ? (
-                      <Image source={{ uri: visit.avatar }} style={styles.visitAvatar} />
+                    {/* Avatar */}
+                    {visit.user?.avatar_url ? (
+                      <Image source={{ uri: visit.user.avatar_url }} style={s.visitAvatar} />
                     ) : (
-                      <View style={[styles.visitAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-                        <MaterialIcons name="person" size={20} color="#727973" />
+                      <View style={[s.visitAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
+                        <MaterialIcons name="person" size={18} color="#727973" />
                       </View>
                     )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.visitName}>{visit.name}</Text>
-                      {visit.dish ? <Text style={styles.visitDish}>{visit.dish}</Text> : null}
-                      <Text style={styles.visitTime}>{visit.timeAgo}</Text>
-                    </View>
-                    <View style={styles.visitRight}>
-                      <View style={styles.visitScoreBadge}>
-                        <Text style={styles.visitScoreText}>{(visit.score ?? 0).toFixed(1)}</Text>
-                      </View>
-                      <MaterialIcons name="chevron-right" size={20} color="#c1c8c2" />
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </>
-        )}
 
-        {/* ── GLOBAL MODE ── */}
-        {mode === 'global' && (
-          <>
-            {/* Platos más pedidos en Fudi */}
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <MaterialIcons name="public" size={20} color="#032417" />
-                <Text style={styles.sectionTitle}>Los más pedidos en Fudi</Text>
-              </View>
-              <View style={styles.dishesList}>
-                {mockData.globalDishes.map((dish, idx) => (
-                  <View key={dish.id} style={styles.dishItem}>
-                    <View style={styles.dishRankBadge}>
-                      <Text style={styles.dishRankText}>#{idx + 1}</Text>
+                    {/* Content */}
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={s.visitName} numberOfLines={1}>{visit.user?.name ?? ''}</Text>
+                        <RelationLabel isMutual={visit.is_mutual} />
+                      </View>
+                      {visit.note ? (
+                        <Text style={s.visitNote} numberOfLines={2}>"{visit.note}"</Text>
+                      ) : null}
+                      {visit.dishes && visit.dishes.length > 0 && (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 5 }}>
+                          {(visit.dishes as any[]).slice(0, 4).map((d: any, di: number) => {
+                            const name = typeof d === 'string' ? d : d.name;
+                            const highlighted = typeof d === 'object' && d.highlighted;
+                            return (
+                              <View key={di} style={[s.dishChip, highlighted && s.dishChipHighlighted]}>
+                                {highlighted && <Text style={s.dishChipStar}>★</Text>}
+                                <Text style={[s.dishChipText, highlighted && s.dishChipTextHighlighted]} numberOfLines={1}>{name}</Text>
+                              </View>
+                            );
+                          })}
+                        </ScrollView>
+                      )}
+                      <Text style={s.visitTime}>{timeAgo(visit.visited_at)}</Text>
                     </View>
-                    <Image source={{ uri: dish.image }} style={styles.dishImage} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.dishName}>{dish.name}</Text>
-                      <Text style={styles.dishNote}>{dish.note}</Text>
-                      <View style={styles.globalOrdersRow}>
-                        <MaterialIcons name="restaurant" size={12} color="#727973" />
-                        <Text style={styles.globalOrdersText}>
-                          {dish.totalOrders.toLocaleString()} pedidos en Fudi
+
+                    {/* Score */}
+                    {visit.rank_score != null && (
+                      <View style={[s.visitScore, { backgroundColor: pal.badgeBg }]}>
+                        <Text style={[s.visitScoreText, { color: pal.badgeText }]}>
+                          {visit.rank_score.toFixed(1)}
                         </Text>
                       </View>
-                    </View>
-                  </View>
-                ))}
-              </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
+          )}
+        </View>
 
-            {/* Privacy notice */}
-            <View style={styles.privacyCard}>
-              <View style={styles.privacyIconWrapper}>
-                <MaterialIcons name="lock" size={22} color="#032417" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.privacyTitle}>Las visitas son privadas</Text>
-                <Text style={styles.privacyText}>
-                  En la vista Global solo se comparten estadísticas agregadas. Para ver las visitas individuales, consulta la pestaña de Amigos.
-                </Text>
-              </View>
-            </View>
-          </>
-        )}
-
-        <View style={{ height: 120 }} />
+        <View style={{ height: 130 }} />
       </ScrollView>
 
       {/* Sticky CTA */}
-      <View style={styles.stickyCtaWrapper}>
+      <View style={s.ctaWrapper}>
         <TouchableOpacity
-          style={styles.stickyCtaBtn}
+          style={s.ctaBtn}
           activeOpacity={0.88}
           onPress={() => router.push(`/journey-b/${id}`)}
         >
           <MaterialIcons name="restaurant-menu" size={20} color="#ffffff" />
-          <Text style={styles.stickyCtaText}>¿Qué pedimos?</Text>
+          <Text style={s.ctaBtnText}>¿Qué pedimos?</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   header: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
+    top: 0, left: 0, right: 0,
     zIndex: 100,
     height: Platform.OS === 'ios' ? 108 : 88,
     flexDirection: 'row',
@@ -427,373 +444,249 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(193,200,194,0.15)',
   },
-  stickyCtaWrapper: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 100 : 80,
-    left: 24,
-    right: 24,
-    zIndex: 60,
-  },
-  stickyCtaBtn: {
-    backgroundColor: '#032417',
-    borderRadius: 999,
-    paddingVertical: 18,
-    paddingHorizontal: 32,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  stickyCtaText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 17,
-    color: '#ffffff',
-  },
   headerBtn: { padding: 8, borderRadius: 999 },
   headerTitle: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 18,
-    color: '#032417',
-    flex: 1,
-    textAlign: 'center',
+    fontFamily: 'Manrope-Bold', fontSize: 18,
+    color: '#032417', flex: 1, textAlign: 'center',
   },
-  hero: {
-    height: 480,
-    position: 'relative',
-    marginTop: Platform.OS === 'ios' ? 108 : 88,
-  },
-  heroOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '42%',
-  },
-  toggleWrapper: {
-    position: 'absolute',
-    top: 24,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  toggle: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(235,232,225,0.92)',
-    borderRadius: 999,
-    padding: 4,
-  },
-  toggleBtn: {
-    paddingHorizontal: 24,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
-  toggleBtnActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  toggleText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 12,
-    color: '#727973',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  toggleTextActive: { color: '#032417' },
+  scroll: { paddingTop: Platform.OS === 'ios' ? 108 : 88 },
+
+  // Hero
+  hero: { height: 360, position: 'relative' },
+  heroGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '70%' },
   heroInfo: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 28,
-    paddingBottom: 44,
-    gap: 10,
-  },
-  heroScoreBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#c7ef48',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 999,
-    alignSelf: 'flex-start',
-  },
-  heroScoreText: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 20,
-    color: '#546b00',
-  },
-  heroScoreLabel: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 12,
-    color: '#546b00',
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    padding: 22, paddingBottom: 32,
   },
   heroName: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 38,
-    color: '#ffffff',
-    lineHeight: 44,
+    fontFamily: 'NotoSerif-BoldItalic', fontSize: 32,
+    color: '#ffffff', lineHeight: 38,
   },
-  heroMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flexWrap: 'wrap',
-  },
-  heroMetaText: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.80)',
-  },
-  heroMetaDot: {
-    color: 'rgba(255,255,255,0.40)',
-    fontSize: 13,
-  },
-  bentoGrid: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 20,
-    marginTop: -28,
+  heroMeta: { fontFamily: 'Manrope-Regular', fontSize: 13, color: 'rgba(255,255,255,0.80)' },
+
+  // Stats
+  statsWrapper: {
+    paddingHorizontal: 16,
+    marginTop: -20,
     zIndex: 10,
   },
-  bentoCell: {
-    flex: 1,
+  statsCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 8,
-    alignItems: 'center',
+    borderRadius: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
     shadowColor: '#1c1c18',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
+    shadowOpacity: 0.10,
+    shadowRadius: 20,
     elevation: 6,
   },
-  bentoCellHighlight: {
-    backgroundColor: '#c7ef48',
-  },
-  bentoCellValue: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 20,
-    color: '#032417',
-  },
-  bentoCellValueHighlight: {
-    color: '#546b00',
-    fontSize: 22,
-  },
-  bentoCellLabel: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 9,
-    color: '#727973',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  bentoCellLabelHighlight: {
-    color: '#546b00',
-  },
-  section: {
-    paddingHorizontal: 20,
-    paddingTop: 36,
-  },
-  sectionHeader: {
+  statsCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
     marginBottom: 18,
   },
-  sectionTitle: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 22,
-    color: '#032417',
-  },
-  dishesList: { gap: 12 },
-  dishItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  dishRankBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#f7f3ec',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dishRankText: {
-    fontFamily: 'Manrope-ExtraBold',
-    fontSize: 10,
-    color: '#032417',
-  },
-  dishImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 12,
-  },
-  dishName: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 16,
-    color: '#032417',
-    marginBottom: 3,
-  },
-  dishNote: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 12,
-    color: '#727973',
-    lineHeight: 17,
-    marginBottom: 8,
-  },
-  dishAvatarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  dishAvatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: '#ffffff',
-  },
-  dishFriendsText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 11,
-    color: '#546b00',
-    marginLeft: 6,
-  },
-  globalOrdersRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  globalOrdersText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 11,
-    color: '#727973',
-  },
-
-  // Recent visits (amigos only)
-  visitsSection: {
-    backgroundColor: '#f7f3ec',
-    borderRadius: 28,
-    marginHorizontal: 20,
-    marginTop: 32,
-    padding: 24,
-  },
-  visitsSectionTitle: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 20,
-    color: '#032417',
-    marginBottom: 2,
-  },
-  visitsSectionSubtitle: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 13,
-    color: '#727973',
-    marginBottom: 20,
-  },
-  visitsList: { gap: 0 },
-  visitItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingVertical: 14,
-  },
-  visitItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(193,200,194,0.25)',
-  },
-  visitAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    borderWidth: 2,
-    borderColor: '#c7ef48',
-  },
-  visitName: {
-    fontFamily: 'Manrope-Bold',
+  statsCardTitle: {
+    fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 15,
     color: '#032417',
   },
-  visitDish: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 12,
-    color: '#424844',
-    fontStyle: 'italic',
-    marginTop: 1,
-  },
-  visitTime: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 11,
-    color: '#727973',
-    marginTop: 2,
-  },
-  visitRight: {
-    alignItems: 'center',
+  metricsToggle: {
     flexDirection: 'row',
-    gap: 4,
+    backgroundColor: '#f1ede6',
+    borderRadius: 999,
+    padding: 3,
   },
-  visitScoreBadge: {
-    backgroundColor: '#c7ef48',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
+  metricsToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     borderRadius: 999,
   },
-  visitScoreText: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 14,
-    color: '#546b00',
+  metricsToggleBtnActive: {
+    backgroundColor: '#ffffff',
+    shadowColor: '#1c1c18',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
-
-  // Privacy notice (global only)
-  privacyCard: {
+  metricsToggleText: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 11,
+    color: '#727973',
+  },
+  metricsToggleTextActive: {
+    color: '#032417',
+  },
+  statsRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 14,
-    backgroundColor: '#f7f3ec',
-    borderRadius: 16,
-    marginHorizontal: 20,
-    marginTop: 32,
-    padding: 20,
+    alignItems: 'flex-end',
   },
-  privacyIconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  statCell: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 3,
+    paddingBottom: 2,
+  },
+  statDivider: {
+    width: 1,
+    height: 52,
+    backgroundColor: '#e6e2db',
+    marginBottom: 14,
+  },
+  statValue: {
+    fontFamily: 'NotoSerif-Bold',
+    fontSize: 30,
+    lineHeight: 34,
+    color: '#032417',
+  },
+  statLabel: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 9,
+    color: '#727973',
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+  },
+  statSub: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 10,
+    marginTop: 1,
+  },
+  avatarStack: {
+    flexDirection: 'row',
+    marginBottom: 5,
+    height: 20,
+  },
+  stackAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+  },
+  stackAvatarPlaceholder: {
     backgroundColor: '#e6e2db',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  privacyTitle: {
+  stackAvatarMore: {
+    backgroundColor: '#f1ede6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stackAvatarMoreText: {
     fontFamily: 'Manrope-Bold',
-    fontSize: 14,
-    color: '#032417',
-    marginBottom: 4,
-  },
-  privacyText: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 13,
+    fontSize: 7,
     color: '#727973',
-    lineHeight: 19,
   },
+  statsEmptyFriends: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    justifyContent: 'center',
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#f1ede6',
+    marginTop: 14,
+  },
+  statsEmptyText: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 11,
+    color: '#c1c8c2',
+  },
+
+  // Dishes
+  section: { paddingHorizontal: 20, paddingTop: 28 },
+  sectionTitle: {
+    fontFamily: 'NotoSerif-BoldItalic', fontSize: 20, color: '#032417', marginBottom: 16,
+  },
+  emptyState: { alignItems: 'center', paddingVertical: 24, gap: 8 },
+  emptyText: { fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center' },
+  emptyBtn: { marginTop: 4, backgroundColor: '#c7ef48', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 8 },
+  emptyBtnText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#032417' },
+  dishesList: { gap: 0 },
+  dishRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    paddingVertical: 12,
+  },
+  dishRowBorder: {
+    borderBottomWidth: 1, borderBottomColor: 'rgba(193,200,194,0.20)',
+  },
+  dishName: {
+    fontFamily: 'Manrope-SemiBold', fontSize: 14, color: '#1c1c18',
+  },
+  dishFriend: {
+    fontFamily: 'Manrope-SemiBold', fontSize: 12, color: '#516600',
+  },
+  dishGlobal: {
+    fontFamily: 'Manrope-Regular', fontSize: 12, color: '#727973',
+  },
+
+  // Recent visits
+  visitsSection: {
+    backgroundColor: '#f7f3ec',
+    borderRadius: 24,
+    marginHorizontal: 16,
+    marginTop: 28,
+    padding: 20,
+  },
+  visitsList: { gap: 0 },
+  visitCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+    paddingVertical: 14,
+  },
+  visitCardBorder: {
+    borderBottomWidth: 1, borderBottomColor: 'rgba(193,200,194,0.25)',
+  },
+  visitAvatar: {
+    width: 42, height: 42, borderRadius: 21,
+    borderWidth: 2, borderColor: 'rgba(199,239,72,0.5)',
+  },
+  visitName: { fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417' },
+  visitNote: {
+    fontFamily: 'NotoSerif-Italic', fontSize: 13,
+    color: '#424844', lineHeight: 18,
+  },
+  dishChipHighlighted: {
+    backgroundColor: 'rgba(199,239,72,0.30)',
+    borderColor: 'rgba(84,107,0,0.25)',
+  },
+  dishChipStar: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 10,
+    color: '#516600',
+  },
+  dishChipTextHighlighted: {
+    color: '#516600',
+    fontFamily: 'Manrope-SemiBold',
+  },
+  dishChip: {
+    backgroundColor: '#ffffff', borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  dishChipText: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#424844' },
+  visitTime: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#727973', marginTop: 2 },
+  visitScore: {
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 999, alignSelf: 'flex-start', marginTop: 2,
+  },
+  visitScoreText: { fontFamily: 'NotoSerif-Bold', fontSize: 14 },
+
+  // CTA
+  ctaWrapper: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 100 : 80,
+    left: 24, right: 24, zIndex: 60,
+  },
+  ctaBtn: {
+    backgroundColor: '#032417',
+    borderRadius: 999,
+    paddingVertical: 18,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25, shadowRadius: 16, elevation: 8,
+  },
+  ctaBtnText: { fontFamily: 'Manrope-Bold', fontSize: 17, color: '#ffffff' },
 });

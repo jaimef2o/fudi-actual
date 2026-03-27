@@ -10,51 +10,107 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAppStore } from '../../store';
 import { useUserRanking, useUpdateVisitRank } from '../../lib/hooks/useVisit';
+import { recomputeRankPositions, SCORE_BRACKETS } from '../../lib/api/visits';
+import { scorePalette } from '../../lib/sentimentColors';
+import { getDisplayName } from '../../lib/utils/restaurantName';
+import { useQueryClient } from '@tanstack/react-query';
 
 const PLACEHOLDER_IMAGE = 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600&auto=format&fit=crop';
 
+type Sentiment = 'loved' | 'fine' | 'disliked';
+
+// ─── Bracket helpers ──────────────────────────────────────────────────────────
+
+const BRACKET_LABELS: Record<Sentiment, string> = {
+  loved:    'entre tus favoritos',
+  fine:     'entre los que estuvieron bien',
+  disliked: 'entre los que no te convencieron',
+};
+
+/** Score for inserting at 0-indexed position `idx` in a bracket that will have `total` items. */
+function calcBracketScore(sentiment: Sentiment, idx: number, total: number): number {
+  const { min, max } = SCORE_BRACKETS[sentiment];
+  if (total <= 1) return Math.round(((min + max) / 2) * 10) / 10;
+  const s = max - (max - min) * idx / (total - 1);
+  return Math.round(s * 10) / 10;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function ComparisonScreen() {
-  // The route param "restaurantId" holds the visitId (legacy naming)
-  const { restaurantId: visitId, restaurantName } = useLocalSearchParams<{
+  // Route params — "restaurantId" holds visitId (legacy naming kept for routing)
+  const { restaurantId: visitId, restaurantName, sentiment: sentimentParam } = useLocalSearchParams<{
     restaurantId: string;
     restaurantName?: string;
+    sentiment?: string;
   }>();
+
+  const sentiment = ((sentimentParam ?? 'fine') as Sentiment);
   const currentUser = useAppStore((s) => s.currentUser);
+  const showToast = useAppStore((s) => s.showToast);
   const { data: ranking = [], isLoading } = useUserRanking(currentUser?.id);
+  const queryClient = useQueryClient();
   const { mutateAsync: updateRank } = useUpdateVisitRank();
-
-  // Exclude the current visit from the ranking list to compare against
-  const existingRanking = ranking.filter((v) => v.id !== visitId);
-
-  const [stepIndex, setStepIndex] = useState(0);
-  const [history, setHistory] = useState<string[]>([]);
-  const [done, setDone] = useState(false);
-  const [finalPosition, setFinalPosition] = useState(1);
-  const [saving, setSaving] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-  // Prevent finishComparison from firing more than once (e.g. on ranking refetch)
-  const finishedRef = useRef(false);
 
   const newRestaurantName = restaurantName ?? 'Nuevo restaurante';
 
-  // Build binary search steps from real ranking
-  function buildSteps() {
-    if (existingRanking.length === 0) return [];
-    const mid = Math.floor(existingRanking.length / 2);
-    const steps: number[] = [mid];
-    if (existingRanking.length > 1) {
-      steps.push(0);
-      if (mid + 1 < existingRanking.length) steps.push(mid + 1);
+  // ── Build bracket list ──────────────────────────────────────────────────────
+  // Only compare against restaurants in the SAME sentiment category,
+  // sorted best-first (rank_score DESC).
+  const bracketList = useMemo(
+    () =>
+      ranking
+        .filter((v) => v.id !== visitId && v.sentiment === sentiment)
+        .sort((a, b) => (b.rank_score ?? -999) - (a.rank_score ?? -999)),
+    [ranking, visitId, sentiment]
+  );
+
+  // ── Binary search state ─────────────────────────────────────────────────────
+  // lo = left boundary (inclusive), hi = right boundary (exclusive).
+  // The restaurant to compare against is at bracketList[mid = floor((lo+hi)/2)].
+  // Invariant: new restaurant's final position is in [lo, hi).
+  //
+  //  • New wins  → hi = mid  (new is better → goes to left of current)
+  //  • Existing wins → lo = mid + 1  (existing is better → new goes right)
+  //  • Done when lo >= hi → insert at index lo
+  const [lo, setLo] = useState(0);
+  const [hi, setHi] = useState(0);
+  const [initialized, setInitialized] = useState(false);
+  const [history, setHistory] = useState<Array<{ lo: number; hi: number }>>([]);
+
+  const [done, setDone] = useState(false);
+  const [finalPosition, setFinalPosition] = useState(1);
+  const [finalScore, setFinalScore] = useState(0);
+  const [saving, setSaving] = useState(false);
+
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const finishedRef = useRef(false);
+
+  // Derived: current pivot to compare against
+  const mid = Math.floor((lo + hi) / 2);
+  const currentComparison = initialized && !done ? bracketList[mid] : null;
+
+  // Max comparisons needed for a bracket of this size = ceil(log2(n+1))
+  const maxSteps = Math.max(1, Math.ceil(Math.log2((bracketList.length || 0) + 1)));
+
+  // ── Initialise search when ranking loads ────────────────────────────────────
+  useEffect(() => {
+    if (isLoading || initialized || finishedRef.current) return;
+
+    if (bracketList.length === 0) {
+      // No other restaurants in this bracket → place automatically
+      finishComparison(0);
+    } else {
+      setHi(bracketList.length);
+      setInitialized(true);
     }
-    return steps;
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, bracketList.length, initialized]);
 
-  const steps = buildSteps();
-  const step = steps[stepIndex] !== undefined ? existingRanking[steps[stepIndex]] : null;
-
+  // ── Animate transition ──────────────────────────────────────────────────────
   function animateTransition(callback: () => void) {
     Animated.sequence([
       Animated.timing(fadeAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
@@ -63,89 +119,112 @@ export default function ComparisonScreen() {
     setTimeout(callback, 150);
   }
 
-  async function finishComparison(position: number) {
-    // Score: position 1 = 10.0, each step down = -0.3 (rough approximation)
-    const rankScore = Math.max(1, Math.round((10 - (position - 1) * 0.5) * 10) / 10);
+  // ── Finish: save score + recompute all positions ────────────────────────────
+  async function finishComparison(insertIdx: number) {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+
+    // Score for this position within the bracket
+    const totalInBracket = bracketList.length + 1;
+    const score = calcBracketScore(sentiment, insertIdx, totalInBracket);
+
     setSaving(true);
     try {
-      await updateRank({ visitId: visitId!, rankPosition: position, rankScore });
+      // 1. Set preliminary rank on new visit (position within bracket, not global yet)
+      await updateRank({ visitId: visitId!, rankPosition: insertIdx + 1, rankScore: score });
+      // 2. Recompute ALL scores + global positions so the whole ranking is consistent
+      await recomputeRankPositions(currentUser!.id);
     } catch (e) {
       console.error('Error saving rank:', e);
     } finally {
       setSaving(false);
     }
-    setFinalPosition(position);
+
+    setFinalScore(score);
+    setFinalPosition(insertIdx + 1);
+    queryClient.invalidateQueries({ queryKey: ['feed'] });
+    queryClient.invalidateQueries({ queryKey: ['ranking', currentUser?.id] });
+    showToast(`¡${newRestaurantName} — ${score.toFixed(1)} puntos!`);
     animateTransition(() => setDone(true));
   }
 
+  // ── Choice handler ──────────────────────────────────────────────────────────
   function handleChoose(winner: 'new' | 'existing') {
-    const newHistory = [...history, winner];
-    setHistory(newHistory);
+    const nextLo = winner === 'existing' ? mid + 1 : lo;
+    const nextHi = winner === 'new' ? mid : hi;
 
-    if (stepIndex >= steps.length - 1 || steps.length === 0) {
-      const wins = newHistory.filter((h) => h === 'new').length;
-      const position = Math.max(1, existingRanking.length - wins + 1);
-      finishComparison(position);
+    setHistory((h) => [...h, { lo, hi }]);
+
+    if (nextLo >= nextHi) {
+      animateTransition(() => finishComparison(nextLo));
     } else {
-      animateTransition(() => setStepIndex(stepIndex + 1));
+      animateTransition(() => {
+        setLo(nextLo);
+        setHi(nextHi);
+      });
     }
   }
 
   function handleUndo() {
-    if (stepIndex === 0) return;
+    if (history.length === 0) return;
+    const prev = history[history.length - 1];
     animateTransition(() => {
-      setHistory(history.slice(0, -1));
-      setStepIndex(stepIndex - 1);
+      setLo(prev.lo);
+      setHi(prev.hi);
+      setHistory((h) => h.slice(0, -1));
     });
   }
 
   function handleSkip() {
-    animateTransition(() => {
-      if (stepIndex >= steps.length - 1) {
-        finishComparison(Math.floor(existingRanking.length / 2) + 1);
-      } else {
-        setStepIndex(stepIndex + 1);
-      }
-    });
+    // Skip = treat as a draw → insert at midpoint of remaining range
+    setHistory((h) => [...h, { lo, hi }]);
+    animateTransition(() => finishComparison(mid));
   }
 
-  // If no existing ranking, auto-place at position 1 (first visit ever)
-  useEffect(() => {
-    if (!isLoading && existingRanking.length === 0 && !finishedRef.current) {
-      finishedRef.current = true;
-      finishComparison(1);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoading, existingRanking.length]);
+  // ── Progress ────────────────────────────────────────────────────────────────
+  const progressPct = initialized && bracketList.length > 0
+    ? (bracketList.length - (hi - lo)) / bracketList.length
+    : 0;
 
-  // Done state — checked FIRST so a ranking refetch can't snap back to the spinner
+  // ── Done state ──────────────────────────────────────────────────────────────
   if (done) {
+    const bracket = SCORE_BRACKETS[sentiment];
+    const scoreColor = sentiment === 'loved' ? '#546b00' : sentiment === 'fine' ? '#424844' : '#ba1a1a';
     return (
       <View style={styles.successContainer}>
         {saving ? (
           <ActivityIndicator size="large" color="#032417" />
         ) : (
           <View style={styles.successCard}>
-            <View style={styles.successBadge}>
-              <Text style={styles.successPosition}>#{finalPosition}</Text>
+            <View style={[styles.successBadge, { backgroundColor: sentiment === 'loved' ? '#c7ef48' : sentiment === 'fine' ? '#f1ede6' : '#fff0f0' }]}>
+              <Text style={[styles.successScore, { color: scoreColor }]}>{finalScore.toFixed(1)}</Text>
+              <Text style={[styles.successScoreLabel, { color: scoreColor }]}>puntos</Text>
             </View>
             <Text style={styles.successTitle}>¡Visita guardada!</Text>
             <Text style={styles.successRestaurant}>{newRestaurantName}</Text>
-            <Text style={styles.successSub}>
-              Ha entrado en la posición{' '}
-              <Text style={styles.successHighlight}>#{finalPosition}</Text>{' '}
-              de tu ranking personal.
-            </Text>
+            <View style={styles.successBracketPill}>
+              <Text style={styles.successBracketText}>
+                {sentiment === 'loved' ? '❤️ Te encantó' : sentiment === 'fine' ? '👌 Estuvo bien' : '😕 No te convenció'}
+                {'  '}·{'  '}
+                Rango {bracket.min.toFixed(1)}–{bracket.max.toFixed(1)}
+              </Text>
+            </View>
             <TouchableOpacity
               style={styles.successBtn}
               activeOpacity={0.85}
-              onPress={() => router.replace('/ranking')}
+              onPress={() => {
+                router.dismissAll();
+                router.navigate('/ranking');
+              }}
             >
               <Text style={styles.successBtnText}>Ver mi ranking →</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.successSecondaryBtn}
-              onPress={() => router.replace('/(tabs)/feed')}
+              onPress={() => {
+                router.dismissAll();
+                router.navigate('/(tabs)/feed');
+              }}
             >
               <Text style={styles.successSecondaryText}>Volver al feed</Text>
             </TouchableOpacity>
@@ -155,8 +234,8 @@ export default function ComparisonScreen() {
     );
   }
 
-  // Loading/placing state (shown before first comparison or while auto-placing first visit)
-  if (isLoading || existingRanking.length === 0) {
+  // ── Loading / placing ───────────────────────────────────────────────────────
+  if (isLoading || !initialized) {
     return (
       <View style={{ flex: 1, backgroundColor: '#fdf9f2', justifyContent: 'center', alignItems: 'center', gap: 16 }}>
         <ActivityIndicator size="large" color="#032417" />
@@ -167,7 +246,7 @@ export default function ComparisonScreen() {
     );
   }
 
-  const compareWith = step;
+  const compareWith = currentComparison;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
@@ -177,12 +256,14 @@ export default function ComparisonScreen() {
           <MaterialIcons name="close" size={24} color="#032417" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Ubicar en ranking</Text>
-        <Text style={styles.headerStep}>{stepIndex + 1}/{steps.length}</Text>
+        <Text style={styles.headerStep}>
+          {history.length + 1}/{maxSteps}
+        </Text>
       </View>
 
       {/* Progress bar */}
       <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: `${((stepIndex + 1) / Math.max(steps.length, 1)) * 100}%` }]} />
+        <View style={[styles.progressFill, { width: `${Math.min(progressPct * 100, 95)}%` }]} />
       </View>
 
       <Animated.View style={[{ flex: 1 }, { opacity: fadeAnim }]}>
@@ -190,9 +271,9 @@ export default function ComparisonScreen() {
         <View style={styles.titleSection}>
           <Text style={styles.mainTitle}>¿Cuál prefieres?</Text>
           <Text style={styles.subtitle}>
-            Para ubicar{' '}
+            Comparando{' '}
             <Text style={styles.subtitleHighlight}>"{newRestaurantName}"</Text>
-            {' '}en tu ranking
+            {' '}{BRACKET_LABELS[sentiment]}
           </Text>
         </View>
 
@@ -231,21 +312,24 @@ export default function ComparisonScreen() {
                 />
                 <View style={styles.historicBadge}>
                   <Text style={styles.historicBadgeText}>
-                    #{compareWith.rank_position ?? steps[stepIndex] + 1} ACTUAL
+                    {compareWith.rank_score?.toFixed(1) ?? '–'} pts
                   </Text>
                 </View>
               </View>
               <View style={styles.cardInfo}>
-                <View>
-                  <Text style={styles.cardName}>{compareWith.restaurant.name}</Text>
-                  <Text style={styles.cardLocation}>{compareWith.restaurant.neighborhood ?? ''}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardName}>{getDisplayName(compareWith.restaurant as any)}</Text>
+                  <Text style={styles.cardLocation}>{[(compareWith.restaurant as any).cuisine, (compareWith.restaurant as any).price_level ? '€'.repeat((compareWith.restaurant as any).price_level) : null].filter(Boolean).join(' · ')}</Text>
                 </View>
-                {compareWith.rank_score != null && (
-                  <View style={styles.scoreRow}>
-                    <Text style={styles.scoreValue}>{compareWith.rank_score.toFixed(1)}</Text>
-                    <Text style={styles.scoreLabel}>Score</Text>
-                  </View>
-                )}
+                {compareWith.rank_score != null && (() => {
+                    const pal = scorePalette(compareWith.rank_score);
+                    return (
+                      <View style={[styles.scoreRow, { backgroundColor: pal.badgeBg, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 }]}>
+                        <Text style={[styles.scoreValue, { color: pal.badgeText }]}>{compareWith.rank_score.toFixed(1)}</Text>
+                        <Text style={[styles.scoreLabel, { color: pal.badgeText }]}>Score</Text>
+                      </View>
+                    );
+                  })()}
               </View>
             </TouchableOpacity>
           )}
@@ -258,9 +342,9 @@ export default function ComparisonScreen() {
           </TouchableOpacity>
           <View style={styles.secondaryActions}>
             <TouchableOpacity
-              style={[styles.secondaryBtn, stepIndex === 0 && { opacity: 0.3 }]}
+              style={[styles.secondaryBtn, history.length === 0 && { opacity: 0.3 }]}
               onPress={handleUndo}
-              disabled={stepIndex === 0}
+              disabled={history.length === 0}
             >
               <MaterialIcons name="undo" size={18} color="#727973" />
               <Text style={styles.secondaryBtnText}>Deshacer</Text>
@@ -270,6 +354,17 @@ export default function ComparisonScreen() {
               <MaterialIcons name="skip-next" size={18} color="#727973" />
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Bracket info pill */}
+        <View style={styles.bracketInfo}>
+          <Text style={styles.bracketInfoText}>
+            {sentiment === 'loved' ? '❤️' : sentiment === 'fine' ? '👌' : '😕'}
+            {'  '}
+            {sentiment === 'loved' ? 'Te encantó' : sentiment === 'fine' ? 'Estuvo bien' : 'No te convenció'}
+            {'  ·  '}
+            Rango {SCORE_BRACKETS[sentiment].min.toFixed(1)}–{SCORE_BRACKETS[sentiment].max.toFixed(1)}
+          </Text>
         </View>
       </Animated.View>
     </View>
@@ -293,7 +388,7 @@ const styles = StyleSheet.create({
   headerStep: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#727973' },
   progressBar: { height: 3, backgroundColor: '#e6e2db' },
   progressFill: { height: 3, backgroundColor: '#c7ef48', borderRadius: 2 },
-  titleSection: { alignItems: 'center', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 16 },
+  titleSection: { alignItems: 'center', paddingHorizontal: 24, paddingTop: 20, paddingBottom: 12 },
   mainTitle: { fontFamily: 'NotoSerif-Bold', fontSize: 28, color: '#032417', marginBottom: 6 },
   subtitle: { fontFamily: 'Manrope-Medium', fontSize: 14, color: '#424844', textAlign: 'center', lineHeight: 20 },
   subtitleHighlight: { fontFamily: 'NotoSerif-BoldItalic', color: '#032417' },
@@ -339,26 +434,52 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 8,
   },
   orText: { fontFamily: 'NotoSerif-BoldItalic', fontSize: 13, color: '#ffffff' },
-  actions: { marginTop: 20, paddingHorizontal: 16, gap: 12 },
+  actions: { marginTop: 16, paddingHorizontal: 16, gap: 12 },
   hardBtn: { backgroundColor: '#f7f3ec', paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
   hardBtnText: { fontFamily: 'Manrope-Bold', fontSize: 14, color: '#424844' },
   secondaryActions: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 8 },
   secondaryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8 },
   secondaryBtnText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#727973' },
+  bracketInfo: {
+    marginHorizontal: 24,
+    marginTop: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: '#f1ede6',
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  bracketInfoText: {
+    fontFamily: 'Manrope-Medium',
+    fontSize: 12,
+    color: '#424844',
+    textAlign: 'center',
+  },
+  // ── Success ──────────────────────────────────────────────────────────────────
   successContainer: { flex: 1, backgroundColor: '#fdf9f2', justifyContent: 'center', alignItems: 'center', padding: 32 },
   successCard: {
     width: '100%', backgroundColor: '#ffffff', borderRadius: 32, padding: 32, alignItems: 'center', gap: 16,
     shadowColor: '#1c1c18', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 32, elevation: 8,
   },
   successBadge: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: '#c7ef48', alignItems: 'center', justifyContent: 'center',
+    width: 96, height: 96, borderRadius: 48,
+    alignItems: 'center', justifyContent: 'center',
   },
-  successPosition: { fontFamily: 'NotoSerif-Bold', fontSize: 28, color: '#032417' },
+  successScore: { fontFamily: 'NotoSerif-Bold', fontSize: 32 },
+  successScoreLabel: { fontFamily: 'Manrope-Bold', fontSize: 10, textTransform: 'uppercase', letterSpacing: 2 },
   successTitle: { fontFamily: 'NotoSerif-Bold', fontSize: 26, color: '#032417' },
   successRestaurant: { fontFamily: 'NotoSerif-BoldItalic', fontSize: 18, color: '#546b00' },
-  successSub: { fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center', lineHeight: 22 },
-  successHighlight: { fontFamily: 'Manrope-Bold', color: '#032417' },
+  successBracketPill: {
+    backgroundColor: '#f1ede6',
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  successBracketText: {
+    fontFamily: 'Manrope-Medium',
+    fontSize: 12,
+    color: '#424844',
+  },
   successBtn: { width: '100%', backgroundColor: '#032417', paddingVertical: 18, borderRadius: 16, alignItems: 'center', marginTop: 8 },
   successBtnText: { fontFamily: 'Manrope-Bold', fontSize: 16, color: '#ffffff' },
   successSecondaryBtn: { paddingVertical: 8 },

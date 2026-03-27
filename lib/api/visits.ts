@@ -4,11 +4,11 @@ import type { VisitRow, VisitDishRow, VisitPhotoRow } from '../database.types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+/** Simple dish input: free text, binary highlighted flag, insertion order */
 export type DishInput = {
-  dish_name: string;
-  rank_position: number;
-  note?: string;
-  photo_url?: string; // single photo per dish for now
+  name: string;
+  highlighted: boolean;
+  position: number;
 };
 
 export type CreateVisitInput = {
@@ -19,6 +19,7 @@ export type CreateVisitInput = {
   rank_position?: number;
   rank_score?: number;
   note?: string;
+  spend_per_person?: '0-20' | '20-35' | '35-60' | '60+' | null;
   visibility?: 'friends' | 'groups' | 'private';
   dishes?: DishInput[];
   photos?: { photo_url: string; type: 'restaurant' | 'dish' }[];
@@ -41,12 +42,8 @@ export async function getVisit(visitId: string): Promise<VisitDetail | null> {
     .from('visits')
     .select(`
       *,
-      restaurant:restaurants!restaurant_id (id, name, neighborhood, cover_image_url),
+      restaurant:restaurants!restaurant_id (id, name, neighborhood, cover_image_url, cuisine, price_level),
       user:users!user_id (id, name, avatar_url),
-      dishes:visit_dishes (
-        *,
-        photos:visit_photos (*)
-      ),
       photos:visit_photos!visit_id (*),
       tags:visit_tags (
         tagged_user:users!tagged_user_id (id, name, avatar_url)
@@ -59,7 +56,7 @@ export async function getVisit(visitId: string): Promise<VisitDetail | null> {
   return data as unknown as VisitDetail;
 }
 
-// User's personal ranking (ordered by rank_position)
+// User's personal ranking — one entry per restaurant (deduplicated, averaged score)
 export async function getUserRanking(userId: string): Promise<VisitDetail[]> {
   const { data, error } = await supabase
     .from('visits')
@@ -67,16 +64,72 @@ export async function getUserRanking(userId: string): Promise<VisitDetail[]> {
       *,
       restaurant:restaurants!restaurant_id (id, name, neighborhood, city, cuisine, price_level, cover_image_url),
       user:users!user_id (id, name, avatar_url),
-      dishes:visit_dishes (*, photos:visit_photos (*)),
       photos:visit_photos!visit_id (*),
       tags:visit_tags (tagged_user:users!tagged_user_id (id, name, avatar_url))
     `)
     .eq('user_id', userId)
     .not('rank_position', 'is', null)
-    .order('rank_position', { ascending: true });
+    .order('rank_score', { ascending: false });
 
   if (error) throw error;
-  return (data ?? []) as unknown as VisitDetail[];
+  const visits = (data ?? []) as unknown as VisitDetail[];
+
+  // Deduplicate: one entry per restaurant.
+  // Rule: when multiple visits to the same restaurant exist, the ranking score
+  // comes from the MOST RECENT visit (by visited_at). Each post is preserved
+  // independently — only the ranking representation uses the latest score.
+  // Visits are already ordered by rank_score DESC; we re-sort by visited_at inside each group.
+  const seen = new Map<string, { visit: VisitDetail; mostRecentScore: number }>();
+  for (const v of visits) {
+    const rid = (v.restaurant as any).id as string;
+    const score = v.rank_score ?? 0;
+    const visitedAt = v.visited_at ?? '';
+    if (!seen.has(rid)) {
+      seen.set(rid, { visit: v, mostRecentScore: score });
+    } else {
+      const entry = seen.get(rid)!;
+      // Keep whichever visit is more recent as the canonical representative
+      const existingAt = entry.visit.visited_at ?? '';
+      if (visitedAt > existingAt) {
+        entry.visit = v;
+        entry.mostRecentScore = score;
+      }
+    }
+  }
+
+  return Array.from(seen.values())
+    .map(({ visit, mostRecentScore }) => ({
+      ...visit,
+      rank_score: mostRecentScore,
+    }))
+    .sort((a, b) => (b.rank_score ?? 0) - (a.rank_score ?? 0))
+    .map((v, i) => ({ ...v, rank_position: i + 1 }));
+}
+
+/**
+ * Returns the rank_score for a specific restaurant in the user's ranking.
+ * When the restaurant has been visited multiple times, returns the score
+ * from the MOST RECENT visit — consistent with getUserRankedVisits behaviour.
+ * Returns null if the restaurant has never been ranked.
+ */
+export async function getRestaurantExistingScore(
+  userId: string,
+  restaurantId: string
+): Promise<{ score: number; visitCount: number } | null> {
+  const { data } = await supabase
+    .from('visits')
+    .select('rank_score, visited_at')
+    .eq('user_id', userId)
+    .eq('restaurant_id', restaurantId)
+    .not('rank_score', 'is', null)
+    .order('visited_at', { ascending: false });
+
+  if (!data || data.length === 0) return null;
+
+  // Use the most recent visit's score as the canonical ranking score
+  const mostRecent = (data as any[])[0];
+  const score = Math.round((mostRecent.rank_score as number) * 10) / 10;
+  return { score, visitCount: data.length };
 }
 
 // Update rank position after comparison
@@ -90,6 +143,142 @@ export async function updateVisitRankPosition(
     .update({ rank_position: rankPosition, rank_score: rankScore })
     .eq('id', visitId);
   if (error) throw error;
+}
+
+// ─── Score brackets ──────────────────────────────────────────────────────────
+// Canonical score ranges per sentiment level (no overlap, full 1–10 coverage):
+//   disliked → 1.0–4.9  |  fine → 5.0–7.4  |  loved → 7.5–10.0
+export const SCORE_BRACKETS = {
+  loved:    { min: 7.5, max: 10.0 },
+  fine:     { min: 5.0, max: 7.4  },
+  disliked: { min: 1.0, max: 4.9  },
+} as const;
+
+/**
+ * After inserting a new visit, recompute rank_score and rank_position for
+ * every scored visit of the user so the whole ranking stays consistent.
+ *
+ * Strategy:
+ *  1. Fetch all scored visits ordered by current rank_score DESC.
+ *  2. Group by sentiment (preserving relative order within each group).
+ *  3. Distribute scores evenly across each bracket using the canonical ranges.
+ *  4. Assign global rank_positions 1,2,3,… sorted by the new score DESC.
+ *  5. Batch-update the DB.
+ */
+export async function recomputeRankPositions(userId: string): Promise<void> {
+  const { data } = await supabase
+    .from('visits')
+    .select('id, rank_score, sentiment, restaurant_id')
+    .eq('user_id', userId)
+    .not('rank_score', 'is', null)
+    .order('rank_score', { ascending: false });
+
+  if (!data || data.length === 0) return;
+
+  // ── Step 1: Deduplicate by restaurant, average scores ──────────────────────
+  // Each restaurant gets one "slot" in the ranking. Its canonical score is the
+  // average of all individual visit scores. Sentiment = first (highest) visit's.
+  type RestaurantSlot = {
+    ids: string[];           // all visit IDs for this restaurant
+    avgScore: number;
+    sentiment: string;
+    totalScore: number;
+    count: number;
+  };
+  const slots = new Map<string, RestaurantSlot>();
+  for (const v of data) {
+    const rid = v.restaurant_id as string;
+    if (!slots.has(rid)) {
+      slots.set(rid, { ids: [], avgScore: 0, sentiment: v.sentiment ?? 'fine', totalScore: 0, count: 0 });
+    }
+    const s = slots.get(rid)!;
+    s.ids.push(v.id);
+    s.totalScore += v.rank_score!;
+    s.count += 1;
+  }
+  for (const s of slots.values()) {
+    s.avgScore = s.totalScore / s.count;
+  }
+
+  // ── Step 2: Group restaurants by sentiment bracket ──────────────────────────
+  const restaurants = Array.from(slots.values()).sort((a, b) => b.avgScore - a.avgScore);
+  const groups: Record<string, RestaurantSlot[]> = { loved: [], fine: [], disliked: [] };
+  for (const r of restaurants) {
+    const key = r.sentiment ?? 'fine';
+    if (groups[key]) groups[key].push(r);
+  }
+
+  // ── Step 3: Redistribute scores evenly within each bracket ─────────────────
+  function recalcBracket(group: RestaurantSlot[], min: number, max: number) {
+    const n = group.length;
+    return group.map((r, i) => ({
+      ...r,
+      newScore: n === 1
+        ? Math.round(((min + max) / 2) * 10) / 10
+        : Math.round((max - (max - min) * i / (n - 1)) * 10) / 10,
+    }));
+  }
+
+  const updated = [
+    ...recalcBracket(groups.loved,    SCORE_BRACKETS.loved.min,    SCORE_BRACKETS.loved.max),
+    ...recalcBracket(groups.fine,     SCORE_BRACKETS.fine.min,     SCORE_BRACKETS.fine.max),
+    ...recalcBracket(groups.disliked, SCORE_BRACKETS.disliked.min, SCORE_BRACKETS.disliked.max),
+  ].sort((a, b) => b.newScore - a.newScore);
+
+  // ── Step 4: Write new score + position to ALL visits of each restaurant ─────
+  // All visits for the same restaurant share the same score and position, so
+  // the ranking always shows each restaurant exactly once.
+  const writes: Promise<any>[] = [];
+  updated.forEach((r, i) => {
+    const position = i + 1;
+    for (const visitId of r.ids) {
+      writes.push(
+        supabase
+          .from('visits')
+          .update({ rank_score: r.newScore, rank_position: position })
+          .eq('id', visitId)
+      );
+    }
+  });
+  await Promise.all(writes);
+}
+
+/**
+ * Swap rank_position + rank_score between two visits (used by refine-ranking).
+ * Call recomputeRankPositions afterwards to normalise the full ranking.
+ */
+export async function swapVisitRanks(
+  visitA: { id: string; rank_position: number | null; rank_score: number | null },
+  visitB: { id: string; rank_position: number | null; rank_score: number | null }
+): Promise<void> {
+  await Promise.all([
+    supabase
+      .from('visits')
+      .update({ rank_position: visitB.rank_position, rank_score: visitB.rank_score })
+      .eq('id', visitA.id),
+    supabase
+      .from('visits')
+      .update({ rank_position: visitA.rank_position, rank_score: visitA.rank_score })
+      .eq('id', visitB.id),
+  ]);
+}
+
+// ─── Delete ──────────────────────────────────────────────────────────────────
+
+/**
+ * Permanently deletes a visit and all its related data (dishes, photos, tags, reactions).
+ * Cascades are handled at the DB level (ON DELETE CASCADE on FK constraints).
+ * Also calls recomputeRankPositions so the ranking stays consistent.
+ */
+export async function deleteVisit(visitId: string, userId: string): Promise<void> {
+  const { error } = await supabase
+    .from('visits')
+    .delete()
+    .eq('id', visitId)
+    .eq('user_id', userId);  // safety: only own visits
+
+  if (error) throw error;
+  await recomputeRankPositions(userId);
 }
 
 // ─── Create ──────────────────────────────────────────────────────────────────
@@ -115,37 +304,23 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
 
   if (visitError) throw visitError;
 
-  // 2. Insert dishes
-  if (dishes && dishes.length > 0) {
-    const { data: insertedDishes, error: dishesError } = await supabase
+  // 2. Insert dishes (free-text, binary highlighted flag, insertion order)
+  const validDishes = (dishes ?? []).filter((d) => d.name?.trim());
+  if (validDishes.length > 0) {
+    const { error: dishesError } = await supabase
       .from('visit_dishes')
       .insert(
-        dishes.map((d) => ({
+        validDishes.map((d, i) => ({
           visit_id: visit.id,
-          dish_name: d.dish_name,
-          rank_position: d.rank_position,
-          note: d.note ?? null,
+          name: d.name.trim(),
+          highlighted: d.highlighted ?? false,
+          position: d.position ?? i,
         }))
-      )
-      .select();
-
+      );
     if (dishesError) throw dishesError;
-
-    // 3. Insert dish photos
-    const dishPhotoRows = (insertedDishes ?? [])
-      .flatMap((insertedDish, i) => {
-        const dish = dishes[i];
-        if (!dish?.photo_url) return [];
-        return [{ visit_id: visit.id, dish_id: insertedDish.id, photo_url: dish.photo_url, type: 'dish' as const }];
-      });
-
-    if (dishPhotoRows.length > 0) {
-      const { error: dishPhotosError } = await supabase.from('visit_photos').insert(dishPhotoRows);
-      if (dishPhotosError) throw dishPhotosError;
-    }
   }
 
-  // 4. Insert restaurant photos
+  // 3. Insert restaurant photos
   if (allRestaurantPhotoUrls.length > 0) {
     const { error: photosError } = await supabase.from('visit_photos').insert(
       allRestaurantPhotoUrls.map((url) => ({
@@ -158,7 +333,7 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
     if (photosError) throw photosError;
   }
 
-  // 5. Tag friends
+  // 4. Tag friends
   if (tagged_user_ids && tagged_user_ids.length > 0) {
     const { error: tagsError } = await supabase.from('visit_tags').insert(
       tagged_user_ids.map((uid) => ({ visit_id: visit.id, tagged_user_id: uid }))
@@ -167,6 +342,23 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
   }
 
   return visit;
+}
+
+// ─── Update ──────────────────────────────────────────────────────────────────
+
+export type UpdateVisitInput = {
+  note?: string | null;
+  sentiment?: 'loved' | 'fine' | 'disliked';
+  spend_per_person?: '0-20' | '20-35' | '35-60' | '60+' | null;
+  visibility?: 'friends' | 'groups' | 'private';
+};
+
+export async function updateVisit(visitId: string, updates: UpdateVisitInput): Promise<void> {
+  const { error } = await supabase
+    .from('visits')
+    .update(updates)
+    .eq('id', visitId);
+  if (error) throw error;
 }
 
 // ─── Reactions ────────────────────────────────────────────────────────────────
@@ -200,28 +392,66 @@ export async function toggleReaction(
 
 // ─── Lists / Bookmarks ────────────────────────────────────────────────────────
 
+/**
+ * Returns the ID of the user's default "want" list, creating it if it doesn't exist.
+ * This ensures list_items always has a valid FK reference.
+ */
+async function getOrCreateWantList(userId: string): Promise<string> {
+  // Try to find an existing 'want' list for this user
+  const { data: existing } = await supabase
+    .from('lists')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('type', 'want')
+    .maybeSingle();
+
+  if (existing?.id) return existing.id;
+
+  // Create the default want list
+  const { data: created, error } = await supabase
+    .from('lists')
+    .insert({ user_id: userId, name: 'Guardados', type: 'want' })
+    .select('id')
+    .single();
+
+  if (error) throw error;
+  return created.id;
+}
+
 export async function getSavedRestaurants(userId: string) {
+  const listId = await getOrCreateWantList(userId);
+
   const { data, error } = await supabase
     .from('list_items')
     .select(`
       added_at,
-      restaurant:restaurants!restaurant_id (*)
+      restaurant:restaurants!restaurant_id (
+        id, name, neighborhood, city, cuisine, price_level, cover_image_url
+      )
     `)
-    .eq('list_id', userId) // using user_id as list_id for default "want" list
+    .eq('list_id', listId)
     .order('added_at', { ascending: false });
 
   if (error) throw error;
   return data ?? [];
 }
 
-export async function bookmarkRestaurant(listId: string, restaurantId: string) {
+export async function bookmarkRestaurant(userId: string, restaurantId: string) {
+  const listId = await getOrCreateWantList(userId);
+  // Delete first to avoid duplicate key error, then insert fresh
+  await supabase
+    .from('list_items')
+    .delete()
+    .eq('list_id', listId)
+    .eq('restaurant_id', restaurantId);
   const { error } = await supabase
     .from('list_items')
-    .upsert({ list_id: listId, restaurant_id: restaurantId });
+    .insert({ list_id: listId, restaurant_id: restaurantId });
   if (error) throw error;
 }
 
-export async function unbookmarkRestaurant(listId: string, restaurantId: string) {
+export async function unbookmarkRestaurant(userId: string, restaurantId: string) {
+  const listId = await getOrCreateWantList(userId);
   const { error } = await supabase
     .from('list_items')
     .delete()

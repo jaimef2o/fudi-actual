@@ -1,21 +1,7 @@
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState } from 'react';
-
-// Mock city list — replace with Google Places API call when ready
-const MOCK_CITIES = [
-  'Madrid', 'Barcelona', 'Valencia', 'Sevilla', 'Bilbao', 'San Sebastián',
-  'Málaga', 'Zaragoza', 'Murcia', 'Palma', 'Las Palmas', 'Alicante',
-  'Córdoba', 'Valladolid', 'Vigo', 'Gijón', 'Granada', 'Pamplona',
-  'Santander', 'Burgos', 'Salamanca', 'Toledo', 'Cádiz', 'Logroño',
-  'París', 'Londres', 'Roma', 'Milán', 'Lisboa', 'Oporto',
-  'Berlín', 'Amsterdam', 'Bruselas', 'Viena', 'Praga', 'Budapest',
-  'Nueva York', 'Los Ángeles', 'Chicago', 'Miami', 'Ciudad de México',
-  'Buenos Aires', 'Bogotá', 'Lima', 'Santiago', 'São Paulo', 'Río de Janeiro',
-  'Tokio', 'Bangkok', 'Singapur', 'Seúl', 'Pekín', 'Shanghái',
-  'Dubái', 'Estambul', 'Marrakech', 'El Cairo', 'Lagos',
-  'Sydney', 'Melbourne', 'Auckland',
-];
+import { useState, useRef, useCallback } from 'react';
+import { searchCities, type PlaceCandidate } from '../lib/api/places';
 
 interface CityPickerProps {
   value: string;
@@ -24,32 +10,58 @@ interface CityPickerProps {
   autoFocus?: boolean;
 }
 
-export function CityPicker({ value, onChange, placeholder = 'Buscar ciudad...', autoFocus }: CityPickerProps) {
+export function CityPicker({
+  value,
+  onChange,
+  placeholder = 'Buscar ciudad...',
+  autoFocus,
+}: CityPickerProps) {
   const [inputText, setInputText] = useState(value);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<PlaceCandidate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchCities = useCallback((text: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (text.trim().length < 2) {
+      setSuggestions([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      const results = await searchCities(text);
+      setSuggestions(results);
+      setLoading(false);
+    }, 350);
+  }, []);
 
   function handleChange(text: string) {
     setInputText(text);
-    if (text.trim().length >= 2) {
-      const filtered = MOCK_CITIES.filter((c) =>
-        c.toLowerCase().includes(text.trim().toLowerCase())
-      ).slice(0, 6);
-      setSuggestions(filtered);
-    } else {
+    if (text.trim() === '') {
+      onChange('');
       setSuggestions([]);
+      setLoading(false);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    } else {
+      fetchCities(text);
     }
-    if (text.trim() === '') onChange('');
   }
 
-  function handleSelect(city: string) {
-    setInputText(city);
+  function handleSelect(candidate: PlaceCandidate) {
+    // Use main_text (city name only, e.g. "Madrid") — not the full description
+    const cityName = candidate.structured_formatting?.main_text ?? candidate.description;
+    setInputText(cityName);
     setSuggestions([]);
-    onChange(city);
+    setLoading(false);
+    onChange(cityName);
   }
 
   function handleClear() {
     setInputText('');
     setSuggestions([]);
+    setLoading(false);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     onChange('');
   }
 
@@ -66,25 +78,43 @@ export function CityPicker({ value, onChange, placeholder = 'Buscar ciudad...', 
           autoCorrect={false}
           autoCapitalize="words"
           autoFocus={autoFocus}
-          onBlur={() => setTimeout(() => { setSuggestions([]); }, 150)}
+          onBlur={() => {
+            // Small delay so tap on suggestion registers before blur hides dropdown
+            setTimeout(() => setSuggestions([]), 200);
+          }}
         />
-        {inputText.length > 0 && (
-          <TouchableOpacity onPress={handleClear} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        {loading ? (
+          <ActivityIndicator size="small" color="#727973" style={{ paddingHorizontal: 4 }} />
+        ) : inputText.length > 0 ? (
+          <TouchableOpacity
+            onPress={handleClear}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <MaterialIcons name="close" size={18} color="#727973" />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
+
       {suggestions.length > 0 && (
         <View style={s.dropdown}>
-          {suggestions.map((city) => (
+          {suggestions.map((c) => (
             <TouchableOpacity
-              key={city}
+              key={c.place_id}
               style={s.suggestion}
-              onPress={() => handleSelect(city)}
+              onPress={() => handleSelect(c)}
               activeOpacity={0.7}
             >
-              <MaterialIcons name="place" size={16} color="#727973" />
-              <Text style={s.suggestionText}>{city}</Text>
+              <MaterialIcons name="place" size={16} color="#516600" />
+              <View style={{ flex: 1 }}>
+                <Text style={s.suggestionMain}>
+                  {c.structured_formatting?.main_text ?? c.description}
+                </Text>
+                {c.structured_formatting?.secondary_text ? (
+                  <Text style={s.suggestionSub} numberOfLines={1}>
+                    {c.structured_formatting.secondary_text}
+                  </Text>
+                ) : null}
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -94,7 +124,7 @@ export function CityPicker({ value, onChange, placeholder = 'Buscar ciudad...', 
 }
 
 const s = StyleSheet.create({
-  wrapper: { position: 'relative', zIndex: 10 },
+  wrapper: { position: 'relative', zIndex: 20 },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -121,22 +151,28 @@ const s = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.10,
     shadowRadius: 20,
-    elevation: 8,
-    overflow: 'hidden',
+    elevation: 10,
     zIndex: 100,
+    overflow: 'hidden',
   },
   suggestion: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
-    paddingVertical: 13,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(193,200,194,0.15)',
   },
-  suggestionText: {
-    fontFamily: 'Manrope-Medium',
+  suggestionMain: {
+    fontFamily: 'Manrope-SemiBold',
     fontSize: 14,
     color: '#1c1c18',
+  },
+  suggestionSub: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 12,
+    color: '#727973',
+    marginTop: 1,
   },
 });

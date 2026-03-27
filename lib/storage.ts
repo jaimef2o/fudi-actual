@@ -1,6 +1,7 @@
 // @ts-nocheck
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { decode } from 'base64-arraybuffer';
 import { supabase } from './supabase';
 
 /**
@@ -13,15 +14,14 @@ export async function pickImage(options?: {
   allowsEditing?: boolean;
 }): Promise<string | null> {
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== 'granted') {
-    return null;
-  }
+  if (status !== 'granted') return null;
 
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ImagePicker.MediaTypeOptions.Images,
     allowsEditing: options?.allowsEditing ?? true,
     aspect: options?.aspect ?? [1, 1],
-    quality: options?.quality ?? 0.8,
+    quality: 1,                    // keep full quality — we compress in compressAndUpload
+    copyToCacheDirectory: true,    // ensures file:// URI on iOS
   });
 
   if (result.canceled || !result.assets?.[0]) return null;
@@ -30,7 +30,6 @@ export async function pickImage(options?: {
 
 /**
  * Opens the device camera and returns the local URI of the captured image.
- * Returns null if the user cancels or denies permission.
  */
 export async function takePhoto(options?: {
   aspect?: [number, number];
@@ -42,7 +41,8 @@ export async function takePhoto(options?: {
   const result = await ImagePicker.launchCameraAsync({
     allowsEditing: true,
     aspect: options?.aspect ?? [1, 1],
-    quality: options?.quality ?? 0.8,
+    quality: 1,
+    copyToCacheDirectory: true,
   });
 
   if (result.canceled || !result.assets?.[0]) return null;
@@ -50,55 +50,53 @@ export async function takePhoto(options?: {
 }
 
 /**
- * Uploads a local image URI to Supabase Storage bucket "photos".
- * Returns the public URL of the uploaded file.
- *
- * NOTE: You must create a public bucket named "photos" in your Supabase dashboard:
- * Storage → New Bucket → name: "photos" → Public: ON
+ * Compress + upload a local image URI to Supabase Storage.
+ * Gets base64 directly from ImageManipulator — no FileSystem.readAsStringAsync needed.
+ * Returns the public URL.
  */
-export async function uploadPhoto(
+export async function compressAndUpload(
   localUri: string,
   path: string,
 ): Promise<string> {
-  // Fetch the local file as a blob
-  const response = await fetch(localUri);
-  const blob = await response.blob();
+  // Use ImageManipulator to resize AND get base64 in one step
+  const result = await ImageManipulator.manipulateAsync(
+    localUri,
+    [{ resize: { width: 1200 } }],
+    {
+      compress: 0.8,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,  // ← get base64 directly, avoids FileSystem read
+    },
+  );
+
+  if (!result.base64) throw new Error('Image compression returned no data');
+
+  const arrayBuffer = decode(result.base64);
 
   const { error } = await supabase.storage
     .from('photos')
-    .upload(path, blob, {
+    .upload(path, arrayBuffer, {
       contentType: 'image/jpeg',
       upsert: true,
     });
 
-  if (error) throw new Error(`Upload failed: ${error.message}`);
+  if (error) {
+    const msg = error.message ?? String(error);
+    throw new Error(`Upload failed: ${msg}`);
+  }
 
   const { data } = supabase.storage.from('photos').getPublicUrl(path);
   return data.publicUrl;
 }
 
 /**
- * Compress a local image to ≤1200px wide at 80% JPEG quality,
- * then upload to Supabase Storage.
- * Falls back to the original URI if expo-image-manipulator isn't installed.
- * Returns the public URL of the uploaded file.
+ * Legacy alias — upload without compression (uses compressAndUpload internally).
  */
-export async function compressAndUpload(
+export async function uploadPhoto(
   localUri: string,
   path: string,
 ): Promise<string> {
-  let finalUri = localUri;
-  try {
-    const result = await ImageManipulator.manipulateAsync(
-      localUri,
-      [{ resize: { width: 1200 } }],
-      { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
-    );
-    finalUri = result.uri;
-  } catch {
-    // expo-image-manipulator not available — upload original
-  }
-  return uploadPhoto(finalUri, path);
+  return compressAndUpload(localUri, path);
 }
 
 /**
@@ -112,9 +110,8 @@ export async function pickAndUpload(
   const localUri = await pickImage(options);
   if (!localUri) return null;
 
-  const ext = localUri.split('.').pop() ?? 'jpg';
-  const filename = `${Date.now()}.${ext}`;
-  const path = `${folder}/${filename}`;
+  const filename = `${Date.now()}.jpg`;
+  const storagePath = `${folder}/${filename}`;
 
-  return uploadPhoto(localUri, path);
+  return compressAndUpload(localUri, storagePath);
 }

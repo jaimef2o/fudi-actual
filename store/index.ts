@@ -13,6 +13,11 @@ interface AppState {
   // Persiste el token de invitación mientras el usuario completa el registro
   pendingInviteToken: string | null;
   setPendingInviteToken: (token: string | null) => void;
+
+  // Toast global
+  toastMessage: string | null;
+  showToast: (message: string) => void;
+  clearToast: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -21,4 +26,8 @@ export const useAppStore = create<AppState>((set) => ({
 
   pendingInviteToken: null,
   setPendingInviteToken: (token) => set({ pendingInviteToken: token }),
+
+  toastMessage: null,
+  showToast: (message) => set({ toastMessage: message }),
+  clearToast: () => set({ toastMessage: null }),
 }));

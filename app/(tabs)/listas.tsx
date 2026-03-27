@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Platform,
   Modal,
+  KeyboardAvoidingView,
   ActivityIndicator,
   Alert,
 } from 'react-native';
@@ -15,10 +16,11 @@ import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import Svg, { Circle } from 'react-native-svg';
-import { type CuisineCategory, type PriceLevel, type City } from './descubrir';
 import { LocationFilterBar, LocationFilters, EMPTY_FILTERS } from '../../components/LocationFilterBar';
+import { InfoTag } from '../../components/InfoTag';
 import { useAppStore } from '../../store';
 import { useUserRanking, useSavedRestaurants } from '../../lib/hooks/useVisit';
+import { getDisplayName } from '../../lib/utils/restaurantName';
 
 // ── DATA ────────────────────────────────────────────────────────────────────
 
@@ -30,6 +32,7 @@ function ScoreCircle({ score }: { score: number }) {
   const R = 20;
   const C = 2 * Math.PI * R;
   const offset = C * (1 - score / 10);
+  const isHigh = score >= 7.5;
   return (
     <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={48} height={48} style={{ transform: [{ rotate: '-90deg' }] }}>
@@ -44,7 +47,7 @@ function ScoreCircle({ score }: { score: number }) {
           strokeLinecap="round"
         />
       </Svg>
-      <Text style={styles.scoreCircleText}>{score.toFixed(1)}</Text>
+      <Text style={[styles.scoreCircleText, { color: isHigh ? '#516600' : '#032417' }]}>{score.toFixed(1)}</Text>
     </View>
   );
 }
@@ -100,7 +103,6 @@ export default function ListasScreen() {
   const totalFilters =
     (appliedFilters.city.trim() !== '' ? 1 : 0) +
     appliedFilters.neighborhoods.length +
-    appliedFilters.cuisines.length +
     appliedFilters.prices.length;
 
   function openFilter() {
@@ -136,11 +138,11 @@ export default function ListasScreen() {
 
   const savedItems = (savedData ?? []).map((item: any) => ({
     id: item.restaurant?.id ?? '',
-    name: item.restaurant?.name ?? '',
-    cuisine: (item.restaurant?.cuisine ?? '') as CuisineCategory,
-    price: priceLabel(item.restaurant?.price_level) as PriceLevel | null,
+    name: item.restaurant ? getDisplayName(item.restaurant) : (item.restaurant?.name ?? ''),
+    cuisine: (item.restaurant?.cuisine ?? null) as string | null,
+    price: item.restaurant?.price_level as string | null,
     neighborhood: item.restaurant?.neighborhood ?? '',
-    city: (item.restaurant?.city ?? '') as City,
+    city: (item.restaurant?.city ?? '') as string,
     image: item.restaurant?.cover_image_url ?? null,
     savedAt: item.added_at ? timeAgoSaved(item.added_at) : '',
   }));
@@ -150,13 +152,11 @@ export default function ListasScreen() {
       const matchSearch =
         search === '' ||
         r.name.toLowerCase().includes(search.toLowerCase()) ||
-        r.cuisine.toLowerCase().includes(search.toLowerCase()) ||
         r.neighborhood.toLowerCase().includes(search.toLowerCase());
       const matchCity = appliedFilters.city.trim() === '' || r.city.toLowerCase().includes(appliedFilters.city.trim().toLowerCase());
       const matchNeighborhood = appliedFilters.neighborhoods.length === 0 || appliedFilters.neighborhoods.some((n: string) => r.neighborhood.toLowerCase().includes(n.toLowerCase()));
-      const matchCuisine = appliedFilters.cuisines.length === 0 || appliedFilters.cuisines.includes(r.cuisine);
       const matchPrice = appliedFilters.prices.length === 0 || (r.price && appliedFilters.prices.includes(r.price));
-      return matchSearch && matchCity && matchNeighborhood && matchCuisine && matchPrice;
+      return matchSearch && matchCity && matchNeighborhood && matchPrice;
     })
     .sort((a: any, b: any) => {
       if (activeSort === 'Nombre A-Z') return a.name.localeCompare(b.name);
@@ -168,12 +168,14 @@ export default function ListasScreen() {
     id: v.restaurant?.id ?? v.id,
     visitId: v.id,
     rank: v.rank_position ?? 0,
-    name: v.restaurant?.name ?? '',
-    cuisine: (v.restaurant?.cuisine ?? '') as CuisineCategory,
+    name: v.restaurant ? getDisplayName(v.restaurant) : (v.restaurant?.name ?? ''),
+    cuisine: (v.restaurant?.cuisine ?? null) as string | null,
+    price: v.restaurant?.price_level as string | null,
     neighborhood: v.restaurant?.neighborhood ?? '',
-    city: (v.restaurant?.city ?? '') as City,
+    city: (v.restaurant?.city ?? '') as string,
     score: v.rank_score ?? 0,
     image: v.restaurant?.cover_image_url ?? null,
+    sentiment: v.sentiment ?? null,
   }));
 
   const filteredRanking = realRanking
@@ -193,7 +195,14 @@ export default function ListasScreen() {
     <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity
+          style={styles.rankBtn}
+          activeOpacity={0.8}
+          onPress={() => router.push('/refine-ranking')}
+        >
+          <MaterialIcons name="tune" size={16} color="#032417" />
+          <Text style={styles.rankBtnText}>Rank</Text>
+        </TouchableOpacity>
         <Text style={styles.headerLogo}>Mis Listas</Text>
         <TouchableOpacity
           style={styles.headerBtn}
@@ -234,7 +243,7 @@ export default function ListasScreen() {
               onPress={() => setActiveTab('guardados')}
             >
               <MaterialIcons
-                name="bookmark"
+                name="favorite"
                 size={15}
                 color={activeTab === 'guardados' ? '#032417' : '#727973'}
               />
@@ -304,7 +313,12 @@ export default function ListasScreen() {
                 {/* Info */}
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rankName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
-                  <Text style={styles.rankMeta} numberOfLines={1} ellipsizeMode="tail">{item.cuisine} · {item.neighborhood}</Text>
+                  {(item.cuisine || item.price) ? (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
+                      <InfoTag value={item.cuisine} />
+                      <InfoTag value={item.price} />
+                    </View>
+                  ) : null}
                 </View>
 
                 {/* Score circle */}
@@ -332,12 +346,12 @@ export default function ListasScreen() {
                 <TextInput
                   style={styles.searchInput}
                   placeholder="Buscar restaurante..."
-                  placeholderTextColor="#c1c8c2"
+                  placeholderTextColor="rgba(114,121,115,0.6)"
                   value={search}
                   onChangeText={setSearch}
                 />
                 {search.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearch('')}>
+                  <TouchableOpacity onPress={() => setSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <MaterialIcons name="close" size={16} color="#727973" />
                   </TouchableOpacity>
                 )}
@@ -347,23 +361,35 @@ export default function ListasScreen() {
             {/* Controls row */}
             <View style={styles.controlsRow}>
               <TouchableOpacity
-                style={styles.controlBtn}
+                style={[styles.controlBtn, activeSort !== 'Más reciente' && styles.controlBtnActive]}
                 onPress={() => setSortOpen(!sortOpen)}
                 activeOpacity={0.75}
               >
-                <Text style={styles.controlBtnText}>
-                  {activeSort === 'Más reciente' ? 'Más reciente ↓' : activeSort === 'Mejor valorado' ? 'Valoración ↓' : 'Nombre A-Z ↓'}
+                <MaterialIcons name="swap-vert" size={15} color={activeSort !== 'Más reciente' ? '#546b00' : '#424844'} />
+                <Text style={[styles.controlBtnText, activeSort !== 'Más reciente' && styles.controlBtnTextActive]}>
+                  {activeSort === 'Más reciente' ? 'Ordenar' : activeSort === 'Mejor valorado' ? 'Valoración' : 'A-Z'}
                 </Text>
               </TouchableOpacity>
+
               <TouchableOpacity
                 style={[styles.controlBtn, totalFilters > 0 && styles.controlBtnActive]}
                 onPress={openFilter}
                 activeOpacity={0.75}
               >
                 <Text style={[styles.controlBtnText, totalFilters > 0 && styles.controlBtnTextActive]}>
-                  {totalFilters > 0 ? `Filtros (${totalFilters})` : 'Filtros'} ⚙
+                  Filtros{totalFilters > 0 ? ` (${totalFilters})` : ''}
                 </Text>
+                <MaterialIcons name="tune" size={15} color={totalFilters > 0 ? '#546b00' : '#424844'} />
               </TouchableOpacity>
+
+              {(totalFilters > 0 || search.trim().length > 0 || activeSort !== 'Más reciente') && (
+                <TouchableOpacity
+                  style={styles.clearBtn}
+                  onPress={() => { setAppliedFilters({ ...EMPTY_FILTERS }); setSearch(''); setActiveSort('Más reciente'); }}
+                >
+                  <MaterialIcons name="close" size={14} color="#546b00" />
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Sort dropdown */}
@@ -387,7 +413,7 @@ export default function ListasScreen() {
             )}
 
             {/* Active filter pills */}
-            {(appliedFilters.city.trim() !== '' || appliedFilters.neighborhoods.length > 0 || appliedFilters.cuisines.length > 0 || appliedFilters.prices.length > 0) && (
+            {(appliedFilters.city.trim() !== '' || appliedFilters.neighborhoods.length > 0 || appliedFilters.prices.length > 0) && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activePillsRow}>
                 {appliedFilters.city.trim() !== '' && (
                   <TouchableOpacity
@@ -406,16 +432,6 @@ export default function ListasScreen() {
                     onPress={() => setAppliedFilters((prev) => ({ ...prev, neighborhoods: prev.neighborhoods.filter((x) => x !== n) }))}
                   >
                     <Text style={styles.activePillText}>{n}</Text>
-                    <MaterialIcons name="close" size={12} color="#546b00" />
-                  </TouchableOpacity>
-                ))}
-                {appliedFilters.cuisines.map((c) => (
-                  <TouchableOpacity
-                    key={c}
-                    style={styles.activePill}
-                    onPress={() => setAppliedFilters((prev) => ({ ...prev, cuisines: prev.cuisines.filter((x) => x !== c) }))}
-                  >
-                    <Text style={styles.activePillText}>{c}</Text>
                     <MaterialIcons name="close" size={12} color="#546b00" />
                   </TouchableOpacity>
                 ))}
@@ -476,11 +492,11 @@ export default function ListasScreen() {
                     )}
                     <View style={{ flex: 1 }}>
                       <Text style={styles.savedName}>{item.name}</Text>
-                      {(item.cuisine || item.price) && (
-                        <Text style={styles.savedMeta}>{[item.cuisine, item.price].filter(Boolean).join(' · ')}</Text>
-                      )}
-                      {item.neighborhood ? (
-                        <Text style={styles.savedNeighborhood}>{item.neighborhood}</Text>
+                      {(item.cuisine || item.price) ? (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
+                          <InfoTag value={item.cuisine} />
+                          <InfoTag value={item.price} />
+                        </View>
                       ) : null}
                     </View>
                     <View style={styles.savedRight}>
@@ -498,22 +514,25 @@ export default function ListasScreen() {
 
       {/* Filter sheet modal */}
       <Modal visible={filterOpen} animationType="slide" transparent onRequestClose={() => setFilterOpen(false)}>
-        <TouchableOpacity style={fsStyles.backdrop} activeOpacity={1} onPress={() => setFilterOpen(false)} />
-        <View style={fsStyles.sheet}>
-          <View style={fsStyles.handle} />
-          <View style={fsStyles.header}>
-            <Text style={fsStyles.title}>Filtros</Text>
-            <TouchableOpacity onPress={resetFilter}>
-              <Text style={fsStyles.reset}>Resetear</Text>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <TouchableOpacity style={fsStyles.backdrop} activeOpacity={1} onPress={() => setFilterOpen(false)} />
+          <View style={fsStyles.sheet}>
+            <View style={fsStyles.handle} />
+            <View style={fsStyles.header}>
+              <TouchableOpacity onPress={resetFilter}>
+                <Text style={fsStyles.reset}>Resetear</Text>
+              </TouchableOpacity>
+              <Text style={fsStyles.title}>Filtros</Text>
+              <TouchableOpacity onPress={() => setFilterOpen(false)}>
+                <MaterialIcons name="close" size={22} color="#032417" />
+              </TouchableOpacity>
+            </View>
+            <LocationFilterBar filters={draftFilters} onChange={setDraftFilters} />
+            <TouchableOpacity style={fsStyles.applyBtn} onPress={applyFilter} activeOpacity={0.85}>
+              <Text style={fsStyles.applyText}>Ver resultados</Text>
             </TouchableOpacity>
           </View>
-          <LocationFilterBar filters={draftFilters} onChange={setDraftFilters} />
-          <TouchableOpacity style={fsStyles.applyBtn} onPress={applyFilter} activeOpacity={0.85}>
-            <Text style={fsStyles.applyText}>
-              {totalFilters === 0 ? 'Ver todos' : `Ver resultados (${totalFilters} filtro${totalFilters > 1 ? 's' : ''})`}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -539,6 +558,20 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(193,200,194,0.15)',
   },
   headerBtn: { padding: 8 },
+  rankBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#c7ef48',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  rankBtnText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 13,
+    color: '#032417',
+  },
   headerLogo: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 20,
@@ -611,14 +644,18 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 14,
     shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    elevation: 3,
   },
   rankItemTop: {
-    borderWidth: 2,
+    backgroundColor: '#fafff2',
+    borderWidth: 1.5,
     borderColor: '#c7ef48',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 5,
   },
   rankImageWrapper: {
     position: 'relative',
@@ -630,12 +667,12 @@ const styles = StyleSheet.create({
   },
   rankBadge: {
     position: 'absolute',
-    top: -6,
-    left: -6,
-    backgroundColor: '#e6e2db',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    top: -8,
+    left: -8,
+    backgroundColor: '#ebe8e1',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -643,31 +680,58 @@ const styles = StyleSheet.create({
   },
   rankBadgeTop: {
     backgroundColor: '#c7ef48',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    top: -9,
+    left: -9,
+    shadowColor: '#546b00',
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    elevation: 4,
   },
   rankBadgeText: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 9,
-    color: '#424844',
+    color: '#727973',
   },
   rankBadgeTextTop: {
     color: '#546b00',
+    fontSize: 10,
   },
   rankName: {
-    fontFamily: 'NotoSerif-Bold',
+    fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 17,
     color: '#032417',
-    marginBottom: 3,
+    marginBottom: 5,
   },
-  rankMeta: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 12,
-    color: '#727973',
+  rankChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+  },
+  chip: {
+    backgroundColor: '#f1ede6',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  chipText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 10,
+    color: '#424844',
+  },
+  chipPrice: {
+    backgroundColor: '#eaf3d0',
+  },
+  chipPriceText: {
+    color: '#546b00',
   },
   scoreCircleText: {
     position: 'absolute',
     fontFamily: 'NotoSerif-Bold',
     fontSize: 11,
-    color: '#032417',
   },
   emptyRanking: {
     alignItems: 'center',
@@ -712,8 +776,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     backgroundColor: '#f7f3ec',
-    borderRadius: 12,
-    paddingHorizontal: 14,
+    borderRadius: 999,
+    paddingHorizontal: 16,
     paddingVertical: 11,
   },
   searchInput: {
@@ -724,33 +788,44 @@ const styles = StyleSheet.create({
   },
   controlsRow: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
+    gap: 8,
     paddingHorizontal: 20,
     marginBottom: 4,
   },
   controlBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 10,
-    borderRadius: 12,
+    paddingHorizontal: 14,
+    borderRadius: 999,
     backgroundColor: '#f7f3ec',
     borderWidth: 1,
     borderColor: 'rgba(193,200,194,0.3)',
   },
   controlBtnActive: {
     backgroundColor: '#c7ef48',
-    borderColor: '#c7ef48',
+    borderColor: '#aed52e',
   },
   controlBtnText: {
     fontFamily: 'Manrope-Bold',
-    fontSize: 13,
-    color: '#032417',
+    fontSize: 11,
+    color: '#424844',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   controlBtnTextActive: {
     color: '#546b00',
+  },
+  clearBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: '#c7ef48',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sortDropdown: {
     marginHorizontal: 20,
@@ -834,12 +909,7 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSerif-Bold',
     fontSize: 16,
     color: '#032417',
-    marginBottom: 2,
-  },
-  savedMeta: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 11,
-    color: '#727973',
+    marginBottom: 5,
   },
   savedNeighborhood: {
     fontFamily: 'Manrope-Regular',

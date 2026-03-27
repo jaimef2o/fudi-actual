@@ -6,219 +6,136 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { ActivityIndicator } from 'react-native';
-import { useRestaurant, useFriendDishes, useRecentVisits } from '../../lib/hooks/useRestaurant';
+import { useRestaurant, useRelevantRestaurantIds, useFriendStats } from '../../lib/hooks/useRestaurant';
+import { useFriendDishesForRestaurant } from '../../lib/hooks/useDishes';
 import { useAppStore } from '../../store';
-
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `hace ${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `hace ${hrs}h`;
-  return `hace ${Math.floor(hrs / 24)}d`;
+  const days = Math.floor(diff / 86400000);
+  if (days === 0) return 'hoy';
+  if (days === 1) return 'ayer';
+  if (days < 7) return `hace ${days} días`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `hace ${weeks} semana${weeks > 1 ? 's' : ''}`;
+  const months = Math.floor(days / 30);
+  return `hace ${months} mes${months > 1 ? 'es' : ''}`;
 }
 
 export default function JourneyBScreen() {
   const { restaurantId } = useLocalSearchParams<{ restaurantId: string }>();
-  const [mode, setMode] = useState<'amigos' | 'global'>('amigos');
   const currentUser = useAppStore((s) => s.currentUser);
 
-  // Real data hooks
   const isUuid = /^[0-9a-f-]{36}$/i.test(restaurantId ?? '');
   const { data: realRestaurant } = useRestaurant(isUuid ? restaurantId : undefined);
-  const { data: friendDishes = [], isLoading: loadingDishes } = useFriendDishes(
-    isUuid ? restaurantId : undefined,
-    currentUser?.id
-  );
-  const { data: recentVisits = [], isLoading: loadingVisits } = useRecentVisits(
-    isUuid ? restaurantId : undefined,
-    currentUser?.id
-  );
+  const { data: chainData } = useRelevantRestaurantIds(isUuid ? restaurantId : undefined);
+  const relevantIds = chainData?.ids;
 
-  const restaurantName = realRestaurant?.name ?? 'este restaurante';
-  const restaurantLocation = realRestaurant?.neighborhood ?? realRestaurant?.address ?? '';
+  const { data: friendVisits = [], isLoading: loadingDishes } = useFriendDishesForRestaurant(
+    relevantIds,
+    currentUser?.id
+  );
+  const { data: friendStats } = useFriendStats(relevantIds, currentUser?.id);
+
+  const restaurantName = chainData?.brandName ?? realRestaurant?.name ?? 'este restaurante';
+  const friendVisitCount = friendStats?.friendVisitCount ?? 0;
+  const friendScore = friendStats?.friendScore;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#1a3a2b' }}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
           <MaterialIcons name="arrow-back" size={24} color="rgba(255,255,255,0.8)" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Pedir ahora</Text>
-        <View style={styles.headerBtn} />
+        <View style={{ flex: 1 }}>
+          <Text style={s.headerTitle} numberOfLines={1}>{restaurantName}</Text>
+          <Text style={s.headerSub}>
+            {friendVisitCount > 0
+              ? `${friendVisitCount} ${friendVisitCount === 1 ? 'amigo estuvo aquí' : 'amigos estuvieron aquí'}${friendScore ? ` · ${friendScore.toFixed(1)} media` : ''}`
+              : 'Sin visitas de amigos aún'}
+          </Text>
+        </View>
+        <View style={s.headerBtn} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-        {/* Toggle */}
-        <View style={styles.toggleWrapper}>
-          <View style={styles.toggle}>
-            <TouchableOpacity
-              style={[styles.toggleBtn, mode === 'amigos' && styles.toggleBtnActive]}
-              onPress={() => setMode('amigos')}
-            >
-              <Text style={[styles.toggleText, mode === 'amigos' && styles.toggleTextActive]}>
-                Amigos
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.toggleBtn, mode === 'global' && styles.toggleBtnActive]}
-              onPress={() => setMode('global')}
-            >
-              <Text style={[styles.toggleText, mode === 'global' && styles.toggleTextActive]}>
-                Global
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+      {loadingDishes ? (
+        <ActivityIndicator size="large" color="#c7ef48" style={{ marginTop: 80 }} />
+      ) : (
+        <ScrollView
+          contentContainerStyle={s.container}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Section header */}
+          {(friendVisits as any[]).length > 0 && (
+            <Text style={s.sectionTitle}>Lo que pidieron tus amigos</Text>
+          )}
 
-        {/* Label + Title + Subtitle */}
-        <Text style={styles.eyebrow}>ACIERTA SIEMPRE</Text>
-        <Text style={styles.mainTitle}>¿Qué pedimos?</Text>
-        <Text style={styles.subtitle}>
-          Lo que piden tus amigos en <Text style={{ color: '#c7ef48' }}>{restaurantName}</Text>.
-        </Text>
-        {restaurantLocation ? (
-          <View style={styles.locationRow}>
-            <MaterialIcons name="location-on" size={13} color="rgba(199,239,72,0.7)" />
-            <Text style={styles.locationText}>{restaurantLocation}</Text>
-          </View>
-        ) : null}
-
-        {/* Dishes section */}
-        {loadingDishes ? (
-          <ActivityIndicator size="large" color="#c7ef48" style={{ marginVertical: 32 }} />
-        ) : friendDishes.length === 0 ? (
-          <View style={{ paddingVertical: 32, alignItems: 'center', gap: 16 }}>
-            <MaterialIcons name="restaurant-menu" size={40} color="rgba(255,255,255,0.2)" />
-            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: 'rgba(255,255,255,0.45)', textAlign: 'center' }}>
-              Aún no hay platos recomendados por tus amigos aquí
-            </Text>
-            <TouchableOpacity
-              style={{ backgroundColor: '#c7ef48', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999, flexDirection: 'row', alignItems: 'center', gap: 8 }}
-              activeOpacity={0.85}
-              onPress={() => router.push(`/registrar-visita?restaurantId=${restaurantId}`)}
-            >
-              <MaterialIcons name="add" size={16} color="#032417" />
-              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417' }}>Sé el primero en registrar</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <>
-            {/* Featured card #1 */}
-            {friendDishes[0] && (
-              <View style={styles.featuredCard}>
-                <View style={{ position: 'relative' }}>
-                  {friendDishes[0].photo_url ? (
-                    <Image source={{ uri: friendDishes[0].photo_url }} style={styles.featuredImage} />
-                  ) : (
-                    <View style={[styles.featuredImage, { backgroundColor: '#0d2b1a', alignItems: 'center', justifyContent: 'center' }]}>
-                      <MaterialIcons name="restaurant-menu" size={48} color="rgba(199,239,72,0.3)" />
-                    </View>
-                  )}
-                  <View style={styles.featuredRankBadge}>
-                    <Text style={styles.featuredRankText}>#1</Text>
-                  </View>
-                </View>
-                <View style={styles.featuredContent}>
-                  <View style={styles.featuredAvatarRow}>
-                    {friendDishes[0].friends.slice(0, 3).map((f, i) => (
-                      f.avatar_url ? (
-                        <Image key={f.id} source={{ uri: f.avatar_url }} style={[styles.featuredAvatar, { marginLeft: i > 0 ? -10 : 0 }]} />
-                      ) : (
-                        <View key={f.id} style={[styles.featuredAvatar, { marginLeft: i > 0 ? -10 : 0, backgroundColor: '#1a3a2b', alignItems: 'center', justifyContent: 'center' }]}>
-                          <MaterialIcons name="person" size={12} color="rgba(199,239,72,0.6)" />
-                        </View>
-                      )
-                    ))}
-                    <Text style={styles.featuredFriendsText}>
-                      {friendDishes[0].friends.length} {friendDishes[0].friends.length === 1 ? 'amigo' : 'amigos'} recomiendan
-                    </Text>
-                  </View>
-                  <Text style={styles.featuredName}>{friendDishes[0].dish_name}</Text>
-                  <Text style={styles.featuredQuote}>Pedido {friendDishes[0].times_ordered} {friendDishes[0].times_ordered === 1 ? 'vez' : 'veces'}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* List items #2+ */}
-            {friendDishes.length > 1 && (
-              <View style={styles.list}>
-                {friendDishes.slice(1).map((dish, idx) => (
-                  <View key={dish.dish_name} style={styles.listItem}>
-                    {dish.photo_url ? (
-                      <Image source={{ uri: dish.photo_url }} style={styles.listImage} />
+          {/* Per-person visit groups */}
+          {(friendVisits as any[]).length > 0 ? (
+            <View style={s.list}>
+              {(friendVisits as any[]).map((fv: any) => (
+                <View key={fv.visitId} style={s.visitGroup}>
+                  {/* Person header */}
+                  <View style={s.personRow}>
+                    {fv.userAvatarUrl ? (
+                      <Image source={{ uri: fv.userAvatarUrl }} style={s.personAvatar} />
                     ) : (
-                      <View style={[styles.listImage, { backgroundColor: '#0d2b1a', alignItems: 'center', justifyContent: 'center' }]}>
-                        <MaterialIcons name="restaurant-menu" size={24} color="rgba(199,239,72,0.3)" />
+                      <View style={[s.personAvatar, s.personAvatarPlaceholder]}>
+                        <MaterialIcons name="person" size={14} color="#82a491" />
                       </View>
                     )}
-                    <View style={{ flex: 1, gap: 4 }}>
-                      <Text style={styles.listName}>{dish.dish_name}</Text>
-                      <Text style={styles.listNote}>Pedido {dish.times_ordered} {dish.times_ordered === 1 ? 'vez' : 'veces'}</Text>
-                      <View style={styles.listByRow}>
-                        <MaterialIcons name="person" size={12} color="rgba(199,239,72,0.6)" />
-                        <Text style={styles.listBy}>
-                          {dish.friends.map((f) => f.name).join(', ')}
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.personName}>{fv.userName}</Text>
+                      {fv.userHandle && (
+                        <Text style={s.personHandle}>@{fv.userHandle}</Text>
+                      )}
+                    </View>
+                    <Text style={s.visitTime}>{timeAgo(fv.visitedAt)}</Text>
+                  </View>
+
+                  {/* Dish chips */}
+                  <View style={s.dishRow}>
+                    {fv.dishes.map((d: any, i: number) => (
+                      <View key={i} style={[s.dishChip, d.highlighted && s.dishChipHighlighted]}>
+                        {d.highlighted && <Text style={s.dishStar}>★</Text>}
+                        <Text style={[s.dishChipText, d.highlighted && s.dishChipTextHighlighted]} numberOfLines={1}>
+                          {d.name}
                         </Text>
                       </View>
-                    </View>
-                    <Text style={styles.listRank}>#{idx + 2}</Text>
+                    ))}
                   </View>
-                ))}
-              </View>
-            )}
-          </>
-        )}
-
-        {/* Visitas recientes */}
-        {!loadingVisits && recentVisits.length > 0 && (
-          <View style={styles.recentSection}>
-            <Text style={styles.recentTitle}>Visitas recientes</Text>
-            {recentVisits.map((visit: any) => (
-              <View key={visit.id} style={styles.recentItem}>
-                {visit.user?.avatar_url ? (
-                  <Image source={{ uri: visit.user.avatar_url }} style={styles.recentAvatar} />
-                ) : (
-                  <View style={[styles.recentAvatar, { backgroundColor: '#0d2b1a', alignItems: 'center', justifyContent: 'center' }]}>
-                    <MaterialIcons name="person" size={18} color="rgba(199,239,72,0.4)" />
-                  </View>
-                )}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.recentName}>{visit.user?.name ?? ''}</Text>
-                  <Text style={styles.recentTime}>{timeAgo(visit.visited_at)}</Text>
                 </View>
-                {visit.rank_score != null && (
-                  <View style={styles.recentScoreBadge}>
-                    <Text style={styles.recentScoreText}>{visit.rank_score.toFixed(1)}</Text>
-                  </View>
-                )}
-              </View>
-            ))}
-          </View>
-        )}
-      </ScrollView>
+              ))}
+            </View>
+          ) : (
+            <View style={s.emptyState}>
+              <MaterialIcons name="restaurant-menu" size={40} color="rgba(255,255,255,0.15)" />
+              <Text style={s.emptyTitle}>Ningún amigo ha registrado platos aquí aún.</Text>
+              <Text style={s.emptySubtitle}>Sé el primero en registrar tu visita.</Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
 
-      {/* Sticky CTA — Registrar visita */}
+      {/* Sticky CTA */}
       <TouchableOpacity
-        style={styles.stickyCta}
+        style={s.cta}
         activeOpacity={0.88}
-        onPress={() => router.push(`/registrar-visita?restaurantId=${restaurantId ?? '1'}`)}
+        onPress={() => router.push(`/registrar-visita?restaurantId=${restaurantId ?? ''}`)}
       >
         <MaterialIcons name="edit-note" size={22} color="#032417" />
-        <Text style={styles.stickyCtaText}>Registrar mi visita</Text>
+        <Text style={s.ctaText}>Registrar mi visita</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   header: {
     height: Platform.OS === 'ios' ? 108 : 88,
     paddingHorizontal: 16,
@@ -226,266 +143,136 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
-  },
-  headerTitle: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 18,
-    color: 'rgba(255,255,255,0.85)',
-    flex: 1,
-    textAlign: 'center',
-  },
-  headerBtn: { padding: 8, minWidth: 40 },
-  container: {
-    paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 148 : 120,
-  },
-  toggleWrapper: {
-    alignItems: 'center',
-    marginBottom: 28,
-  },
-  toggle: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 999,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  toggleBtn: {
-    paddingHorizontal: 28,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  toggleBtnActive: {
-    backgroundColor: '#c7ef48',
-  },
-  toggleText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 11,
-    color: 'rgba(255,255,255,0.45)',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  toggleTextActive: {
-    color: '#032417',
-  },
-  eyebrow: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 10,
-    color: '#c7ef48',
-    textTransform: 'uppercase',
-    letterSpacing: 3,
-    marginBottom: 8,
-  },
-  mainTitle: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 38,
-    color: '#ffffff',
-    lineHeight: 44,
-    marginBottom: 10,
-  },
-  subtitle: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.60)',
-    lineHeight: 20,
-    marginBottom: 8,
-  },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 24,
-  },
-  locationText: {
-    fontFamily: 'Manrope-Medium',
-    fontSize: 12,
-    color: 'rgba(199,239,72,0.7)',
-  },
-  // Featured card
-  featuredCard: {
-    backgroundColor: '#0d1f14',
-    borderRadius: 20,
-    overflow: 'hidden',
-    marginBottom: 16,
-  },
-  featuredImage: {
-    width: '100%',
-    aspectRatio: 4 / 3,
-  },
-  featuredRankBadge: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    backgroundColor: '#c7ef48',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  featuredRankText: {
-    fontFamily: 'Manrope-ExtraBold',
-    fontSize: 13,
-    color: '#032417',
-  },
-  featuredContent: {
-    padding: 20,
-    gap: 10,
-  },
-  featuredAvatarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
   },
-  featuredAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: '#1a3a2b',
-  },
-  featuredFriendsText: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.60)',
-    marginLeft: 4,
-  },
-  featuredName: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 24,
-    color: '#ffffff',
-    lineHeight: 30,
-  },
-  featuredQuote: {
-    fontFamily: 'NotoSerif-Italic',
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.55)',
-    lineHeight: 20,
-  },
-  // List items
-  list: {
-    gap: 12,
-  },
-  listItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-  listImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 12,
-  },
-  listName: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 16,
-    color: '#ffffff',
-  },
-  listNote: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.55)',
-  },
-  listByRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 2,
-  },
-  listBy: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 9,
-    color: 'rgba(199,239,72,0.60)',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  listRank: {
-    fontFamily: 'Manrope-ExtraBold',
-    fontSize: 18,
-    color: '#c7ef48',
-    opacity: 0.5,
-    minWidth: 28,
-    textAlign: 'right',
-  },
-  recentSection: {
-    marginTop: 28,
-    gap: 12,
-  },
-  recentTitle: {
+  headerBtn: { padding: 8, minWidth: 40 },
+  headerTitle: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 20,
     color: '#ffffff',
-    marginBottom: 4,
+    lineHeight: 24,
   },
-  recentItem: {
+  headerSub: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 13,
+    color: '#82a491',
+    marginTop: 2,
+  },
+
+  container: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: Platform.OS === 'ios' ? 148 : 120,
+    gap: 4,
+  },
+
+  sectionTitle: {
+    fontFamily: 'NotoSerif-BoldItalic',
+    fontSize: 18,
+    color: 'rgba(255,255,255,0.85)',
+    marginBottom: 16,
+  },
+
+  list: { gap: 0 },
+
+  visitGroup: {
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.07)',
+    gap: 12,
+  },
+
+  personRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    gap: 10,
+  },
+  personAvatar: {
+    width: 32,
+    height: 32,
     borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(199,239,72,0.30)',
   },
-  recentAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.15)',
+  personAvatarPlaceholder: {
+    backgroundColor: 'rgba(130,164,145,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  recentName: {
-    fontFamily: 'Manrope-Bold',
+  personName: {
+    fontFamily: 'Manrope-SemiBold',
     fontSize: 14,
     color: '#ffffff',
   },
-  recentDish: {
-    fontFamily: 'NotoSerif-Italic',
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.55)',
-    marginTop: 1,
-  },
-  recentTime: {
+  personHandle: {
     fontFamily: 'Manrope-Regular',
     fontSize: 11,
-    color: 'rgba(199,239,72,0.6)',
-    marginTop: 2,
+    color: '#82a491',
   },
-  recentRight: {
-    position: 'relative',
-  },
-  recentThumb: {
-    width: 60,
-    height: 60,
-    borderRadius: 12,
-  },
-  recentScoreBadge: {
-    position: 'absolute',
-    bottom: -6,
-    right: -6,
-    backgroundColor: '#c7ef48',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#1a3a2b',
-  },
-  recentScoreText: {
-    fontFamily: 'NotoSerif-Bold',
+  visitTime: {
+    fontFamily: 'Manrope-Regular',
     fontSize: 11,
-    color: '#032417',
+    color: '#82a491',
   },
-  stickyCta: {
+
+  dishRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingLeft: 42, // align with text after avatar
+  },
+
+  dishChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  dishChipHighlighted: {
+    backgroundColor: 'rgba(199,239,72,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(199,239,72,0.25)',
+  },
+  dishStar: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 10,
+    color: '#c7ef48',
+  },
+  dishChipText: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.75)',
+  },
+  dishChipTextHighlighted: {
+    fontFamily: 'Manrope-SemiBold',
+    color: '#c7ef48',
+  },
+
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 60,
+    gap: 12,
+  },
+  emptyTitle: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.40)',
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.25)',
+    textAlign: 'center',
+  },
+
+  cta: {
     position: 'absolute',
     bottom: Platform.OS === 'ios' ? 48 : 32,
-    left: 24,
-    right: 24,
+    left: 24, right: 24,
     backgroundColor: '#c7ef48',
     borderRadius: 999,
     paddingVertical: 16,
@@ -499,9 +286,5 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 8,
   },
-  stickyCtaText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 16,
-    color: '#032417',
-  },
+  ctaText: { fontFamily: 'Manrope-Bold', fontSize: 16, color: '#032417' },
 });

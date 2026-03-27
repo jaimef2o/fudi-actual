@@ -9,14 +9,17 @@ import {
   Dimensions,
   ActivityIndicator,
   Alert,
+  Share,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { CityPicker } from '../../components/CityPicker';
 import { useAppStore } from '../../store';
-import { useProfile, useFriends, useRelationship, useFollowUser, useUnfollowUser } from '../../lib/hooks/useProfile';
+import { useProfile, useFriends, useRelationship, useFollowUser, useUnfollowUser, useFollowerCount, useFollowingCount } from '../../lib/hooks/useProfile';
 import { useUserRanking } from '../../lib/hooks/useVisit';
+import { InfoTag } from '../../components/InfoTag';
+import { getDisplayName } from '../../lib/utils/restaurantName';
+import { supabase } from '../../lib/supabase';
 
 const { width } = Dimensions.get('window');
 const GRID_CELL = (width - 4) / 3;
@@ -50,9 +53,9 @@ const MY_PROFILE = {
   avatar: P_AVT,
   stats: { visited: 124, average: 9.1, friends: 850 },
   topRestaurants: [
-    { id: '1', name: 'Casa Botín', neighborhood: 'La Latina · Madrid', cuisine: 'Cocina Castellana', score: 9.5, image: P_R1 },
-    { id: '2', name: "L'Atelier", neighborhood: 'Chamberí · Madrid', cuisine: 'Cocina de Autor', score: 9.2, image: P_R2 },
-    { id: '3', name: 'DiverXO', neighborhood: 'Tetuán · Madrid', cuisine: 'Alta Cocina', score: 9.0, image: P_R3 },
+    { id: '1', name: 'Casa Botín', neighborhood: 'La Latina · Madrid', cuisine: 'Española & Tapas', price: '€€', score: 9.5, image: P_R1 },
+    { id: '2', name: "L'Atelier", neighborhood: 'Chamberí · Madrid', cuisine: 'Cocina de Autor', price: '€€€€', score: 9.2, image: P_R2 },
+    { id: '3', name: 'DiverXO', neighborhood: 'Tetuán · Madrid', cuisine: null, price: '€€€€', score: 9.0, image: P_R3 },
   ],
   activityPosts: [
     { id: '1', image: P_D1 }, { id: '2', image: P_R1 }, { id: '3', image: P_R2 },
@@ -183,9 +186,12 @@ export default function ProfileScreen() {
   const { data: relationship } = useRelationship(currentUser?.id, isOwn ? undefined : profileUserId);
   const { mutateAsync: follow, isPending: following } = useFollowUser(currentUser?.id ?? '');
   const { mutateAsync: unfollow, isPending: unfollowing } = useUnfollowUser(currentUser?.id ?? '');
+  const { data: followerCount = 0 } = useFollowerCount(profileUserId || undefined);
+  const { data: followingCount = 0 } = useFollowingCount(profileUserId || undefined);
 
-  const isMutualFriend = (relationship as any)?.type === 'mutual';
-  const isFollowing = !!(relationship as any);
+  const relType = (relationship as any)?.type ?? null; // null | 'following' | 'mutual'
+  const isMutualFriend = relType === 'mutual';
+  const isFollowing = relType !== null;
 
   // Build display data from real data + mock fallback
   const profileName = (realProfile as any)?.name ?? (isOwn ? MY_PROFILE.name : 'Usuario');
@@ -200,31 +206,62 @@ export default function ProfileScreen() {
 
   const topRestaurants = realRanking.slice(0, 3).map((v: any, i: number) => ({
     id: v.restaurant?.id ?? i,
-    name: v.restaurant?.name ?? '—',
+    name: v.restaurant ? getDisplayName(v.restaurant) : (v.restaurant?.name ?? '—'),
     neighborhood: [v.restaurant?.neighborhood, v.restaurant?.city].filter(Boolean).join(' · '),
-    cuisine: v.restaurant?.cuisine ?? 'Restaurante',
+    cuisine: (v.restaurant?.cuisine as string | null) ?? null,
+    price: (v.restaurant?.price_level as string | null) ?? null,
     score: v.rank_score ?? 0,
-    image: v.restaurant?.cover_image_url ?? (isOwn ? MY_PROFILE.topRestaurants[i]?.image : null),
+    image: v.restaurant?.cover_image_url ?? null,
   }));
 
-  // Activity: photos from all visits
+  // Activity: photos from all visits — preserve visit_id for correct navigation
   const activityPhotos = realRanking
-    .flatMap((v: any) => v.photos ?? [])
+    .flatMap((v: any) => (v.photos ?? []).map((p: any) => ({ ...p, visit_id: v.id })))
     .filter((p: any) => p?.photo_url)
     .slice(0, 12);
 
-  const [homeCity, setHomeCity] = useState<string>(isOwn ? (MY_PROFILE.home_city ?? '') : '');
+
+  async function handleLogout() {
+    Alert.alert(
+      'Cerrar sesión',
+      '¿Estás seguro de que quieres cerrar sesión?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Cerrar sesión',
+          style: 'destructive',
+          onPress: async () => {
+            await supabase.auth.signOut();
+            router.replace('/auth');
+          },
+        },
+      ]
+    );
+  }
 
   async function handleFollowToggle() {
     if (!currentUser?.id || !profileUserId) return;
-    try {
-      if (isFollowing) {
-        await unfollow(profileUserId);
-      } else {
-        await follow(profileUserId);
+    if (isFollowing) {
+      Alert.alert(
+        isMutualFriend ? 'Dejar de ser amigos' : 'Dejar de seguir',
+        `¿Dejar de seguir a ${profileName}?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: 'Dejar de seguir',
+            style: 'destructive',
+            onPress: async () => {
+              try { await unfollow(profileUserId); } catch (e: any) {
+                Alert.alert('Error', e.message ?? 'No se pudo completar la acción.');
+              }
+            },
+          },
+        ]
+      );
+    } else {
+      try { await follow(profileUserId); } catch (e: any) {
+        Alert.alert('Error', e.message ?? 'No se pudo completar la acción.');
       }
-    } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'No se pudo completar la acción.');
     }
   }
 
@@ -236,7 +273,19 @@ export default function ProfileScreen() {
           <MaterialIcons name="arrow-back" size={24} color="#032417" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{isOwn ? 'Perfil' : profileName}</Text>
-        <TouchableOpacity style={styles.headerBtn}>
+        <TouchableOpacity
+          style={styles.headerBtn}
+          onPress={() => {
+            if (isOwn) {
+              router.push('/settings');
+            } else {
+              Share.share({
+                title: profileName,
+                message: `Mira el perfil de ${profileName} en fudi 🍽️`,
+              });
+            }
+          }}
+        >
           <MaterialIcons
             name={isOwn ? 'settings' : 'ios-share'}
             size={24}
@@ -270,15 +319,6 @@ export default function ProfileScreen() {
                 <Text style={styles.locationInfoText}>{profileCity}</Text>
               </View>
             ) : null}
-            {isOwn && (
-              <View style={styles.cityPickerWrapper}>
-                <CityPicker
-                  value={homeCity}
-                  onChange={setHomeCity}
-                  placeholder="Ciudad base..."
-                />
-              </View>
-            )}
             {profileBio ? (
               <Text style={styles.profileBio}>{profileBio}</Text>
             ) : null}
@@ -294,7 +334,10 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
-                style={[styles.connectBtn, isFollowing && styles.friendBtn]}
+                style={[
+                  styles.connectBtn,
+                  isMutualFriend ? styles.mutualBtn : isFollowing ? styles.followingBtn : null,
+                ]}
                 activeOpacity={0.8}
                 onPress={handleFollowToggle}
                 disabled={following || unfollowing}
@@ -304,12 +347,12 @@ export default function ProfileScreen() {
                 ) : (
                   <>
                     <MaterialIcons
-                      name={isMutualFriend ? 'people' : isFollowing ? 'people' : 'person-add'}
+                      name={isMutualFriend ? 'people' : isFollowing ? 'check' : 'person-add'}
                       size={17}
                       color={isFollowing ? '#546b00' : '#ffffff'}
                     />
                     <Text style={[styles.connectBtnText, isFollowing && styles.friendBtnText]}>
-                      {isMutualFriend ? 'Amigos' : isFollowing ? 'Siguiendo' : 'Conectar'}
+                      {isMutualFriend ? 'Amigos' : isFollowing ? 'Siguiendo' : 'Seguir'}
                     </Text>
                   </>
                 )}
@@ -330,8 +373,13 @@ export default function ProfileScreen() {
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{(friendsList as any[]).length}</Text>
-              <Text style={styles.statLabel}>AMIGOS</Text>
+              <Text style={styles.statValue}>{followerCount}</Text>
+              <Text style={styles.statLabel}>SEGUIDORES</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>{followingCount}</Text>
+              <Text style={styles.statLabel}>SIGUIENDO</Text>
             </View>
           </View>
         </View>
@@ -374,7 +422,7 @@ export default function ProfileScreen() {
         ) : activeTab === 'favoritos' ? (
           <FavoritosTab restaurants={topRestaurants} showRankingLink={isOwn} />
         ) : (
-          <ActividadTab posts={activityPhotos.length > 0 ? activityPhotos.map((p: any) => ({ id: p.id ?? p.photo_url, image: p.photo_url })) : (isOwn ? MY_PROFILE.activityPosts : [])} />
+          <ActividadTab posts={activityPhotos.map((p: any) => ({ id: p.visit_id, image: p.photo_url }))} />
         )}
 
         <View style={{ height: 100 }} />
@@ -389,7 +437,7 @@ function FavoritosTab({
   restaurants,
   showRankingLink,
 }: {
-  restaurants: typeof MY_PROFILE.topRestaurants;
+  restaurants: { id: string | number; name: string; neighborhood: string; cuisine: string | null; price?: string | null; score: number; image: string | null }[];
   showRankingLink: boolean;
 }) {
   return (
@@ -402,7 +450,13 @@ function FavoritosTab({
           onPress={() => router.push(`/restaurant/${restaurant.id}`)}
         >
           <View style={styles.favImageWrapper}>
-            <Image source={{ uri: restaurant.image }} style={styles.favImage} resizeMode="cover" />
+            {restaurant.image ? (
+              <Image source={{ uri: restaurant.image }} style={styles.favImage} resizeMode="cover" />
+            ) : (
+              <View style={[styles.favImage, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
+                <MaterialIcons name="restaurant" size={36} color="#c1c8c2" />
+              </View>
+            )}
             <View style={styles.favOverlay} />
             <View style={[styles.rankBadge, { backgroundColor: RANK_COLORS[idx] }]}>
               <Text style={[styles.rankBadgeText, { color: RANK_TEXT_COLORS[idx] }]}>
@@ -413,9 +467,13 @@ function FavoritosTab({
               <Text style={styles.scoreBadgeText}>{restaurant.score.toFixed(1)}</Text>
             </View>
             <View style={styles.favInfoOverlay}>
-              <Text style={styles.favCuisine}>{restaurant.cuisine.toUpperCase()}</Text>
               <Text style={styles.favName}>{restaurant.name}</Text>
-              <Text style={styles.favNeighborhood}>{restaurant.neighborhood}</Text>
+              {(restaurant.cuisine || restaurant.price) ? (
+                <View style={{ flexDirection: 'row', gap: 5, marginTop: 5 }}>
+                  <InfoTag value={restaurant.cuisine} />
+                  <InfoTag value={restaurant.price} />
+                </View>
+              ) : null}
             </View>
           </View>
         </TouchableOpacity>
@@ -437,6 +495,20 @@ function FavoritosTab({
 }
 
 function ActividadTab({ posts }: { posts: { id: string; image: string }[] }) {
+  if (posts.length === 0) {
+    return (
+      <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 10 }}>
+        <MaterialIcons name="photo-library" size={40} color="#e6e2db" />
+        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 16, color: '#032417', textAlign: 'center' }}>
+          Sin fotos todavía
+        </Text>
+        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973', textAlign: 'center', lineHeight: 19 }}>
+          Las fotos de tus visitas aparecerán aquí cuando registres una visita con imágenes.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.gridWrapper}>
       {posts.map((post, idx) => (
@@ -636,6 +708,14 @@ const styles = StyleSheet.create({
   },
   friendBtn: {
     backgroundColor: '#c7ef48',
+  },
+  mutualBtn: {
+    backgroundColor: '#c7ef48',
+  },
+  followingBtn: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: '#c7ef48',
   },
   connectBtnText: {
     fontFamily: 'Manrope-Bold',

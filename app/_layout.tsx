@@ -1,7 +1,7 @@
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, Platform } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import { useFonts } from 'expo-font';
@@ -23,6 +23,26 @@ import { supabase } from '../lib/supabase';
 import { useAppStore } from '../store';
 import type { UserRow } from '../lib/database.types';
 import { initMonitoring, setMonitoringUser, getSentryErrorBoundary } from '../lib/monitoring';
+import { Toast } from '../components/Toast';
+
+// Native fallback error boundary when Sentry is not available
+class NativeErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback: React.ComponentType },
+  { hasError: boolean }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    if (this.state.hasError) {
+      const Fallback = this.props.fallback;
+      return <Fallback />;
+    }
+    return this.props.children;
+  }
+}
 
 // Init Sentry as early as possible
 initMonitoring();
@@ -193,7 +213,8 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, [fontsLoaded]);
 
-  if (!fontsLoaded) return null;
+  // On web, useFonts can hang indefinitely — don't block rendering
+  if (!fontsLoaded && Platform.OS !== 'web') return null;
 
   const stackContent = (
     <QueryClientProvider client={queryClient}>
@@ -207,11 +228,13 @@ export default function RootLayout() {
         <Stack.Screen name="profile/[userId]" options={{ headerShown: false, presentation: 'card' }} />
         <Stack.Screen name="journey-b/[restaurantId]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="registrar-visita" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
-        <Stack.Screen name="comparison/[restaurantId]" options={{ headerShown: false, presentation: 'card' }} />
+        <Stack.Screen name="comparison/[restaurantId]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="select-restaurant" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="auth/preferences" options={{ headerShown: false }} />
         <Stack.Screen name="profile/edit" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="invite/[token]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="saved-posts" options={{ headerShown: false, presentation: 'card' }} />
+        <Stack.Screen name="refine-ranking" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
       </Stack>
     </QueryClientProvider>
   );
@@ -220,9 +243,15 @@ export default function RootLayout() {
     return (
       <SentryErrorBoundary fallback={ErrorFallback}>
         {stackContent}
+        <Toast />
       </SentryErrorBoundary>
     );
   }
 
-  return stackContent;
+  return (
+    <NativeErrorBoundary fallback={ErrorFallback}>
+      {stackContent}
+      <Toast />
+    </NativeErrorBoundary>
+  );
 }

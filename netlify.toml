@@ -1,0 +1,30 @@
+[build]
+  command   = "npx expo export --platform web"
+  publish   = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Google Places proxy — must come BEFORE the SPA catch-all
+[[redirects]]
+  from   = "/.netlify/functions/places"
+  to     = "/.netlify/functions/places"
+  status = 200
+
+# SPA fallback — Expo Router handles all routing client-side
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+# Cache static assets aggressively
+[[headers]]
+  for = "/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/_expo/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

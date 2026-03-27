@@ -18,10 +18,14 @@ create table if not exists public.users (
   bio                  text,
   cuisine_dislikes     text[],
   dietary_restrictions text[],
+  push_token           text,
   is_creator           boolean not null default false,
   taste_profile        text,
   created_at           timestamptz not null default now()
 );
+
+-- If the table already exists, run this separately:
+-- ALTER TABLE public.users ADD COLUMN IF NOT EXISTS push_token TEXT;
 
 create table if not exists public.relationships (
   user_id       uuid not null references public.users(id) on delete cascade,
@@ -30,6 +34,11 @@ create table if not exists public.relationships (
   affinity_score numeric(4,1),
   created_at    timestamptz not null default now(),
   primary key (user_id, target_id)
+);
+
+create table if not exists public.chains (
+  id   uuid primary key default uuid_generate_v4(),
+  name text not null unique
 );
 
 create table if not exists public.restaurants (
@@ -42,8 +51,9 @@ create table if not exists public.restaurants (
   lat              numeric(9,6),
   lng              numeric(9,6),
   cuisine          text,
-  price_level      int check (price_level between 1 and 4),
-  cover_image_url  text
+  price_level      text,
+  cover_image_url  text,
+  chain_id         uuid references public.chains(id)
 );
 
 create table if not exists public.visits (
@@ -61,13 +71,24 @@ create table if not exists public.visits (
 );
 
 create table if not exists public.visit_dishes (
-  id            uuid primary key default uuid_generate_v4(),
-  visit_id      uuid not null references public.visits(id) on delete cascade,
-  dish_name     text not null,
-  rank_position int,
-  note          text,
-  created_at    timestamptz not null default now()
+  id          uuid primary key default uuid_generate_v4(),
+  visit_id    uuid not null references public.visits(id) on delete cascade,
+  name        text not null,
+  highlighted boolean not null default false,
+  position    int not null default 0,
+  created_at  timestamptz not null default now()
 );
+create index if not exists idx_visit_dishes_visit on public.visit_dishes(visit_id);
+
+-- ── MIGRATION (run once if upgrading from v1 schema) ─────────────────────────
+-- ALTER TABLE public.visit_dishes RENAME COLUMN dish_name TO name;
+-- ALTER TABLE public.visit_dishes RENAME COLUMN rank_position TO position;
+-- UPDATE public.visit_dishes SET position = 0 WHERE position IS NULL;
+-- ALTER TABLE public.visit_dishes ALTER COLUMN position SET NOT NULL;
+-- ALTER TABLE public.visit_dishes ALTER COLUMN position SET DEFAULT 0;
+-- ALTER TABLE public.visit_dishes DROP COLUMN IF EXISTS note;
+-- ALTER TABLE public.visit_dishes ADD COLUMN IF NOT EXISTS highlighted BOOLEAN NOT NULL DEFAULT FALSE;
+-- ─────────────────────────────────────────────────────────────────────────────
 
 create table if not exists public.visit_photos (
   id         uuid primary key default uuid_generate_v4(),
@@ -195,7 +216,9 @@ create policy "visit_dishes: via visit" on public.visit_dishes
         and (v.user_id = auth.uid()
           or (v.visibility = 'friends' and exists (
             select 1 from public.relationships r
-            where r.user_id = auth.uid() and r.target_id = v.user_id and r.type = 'mutual'
+            where r.user_id = auth.uid()
+              and r.target_id = v.user_id
+              and r.type in ('mutual', 'following')
           ))
         )
     )

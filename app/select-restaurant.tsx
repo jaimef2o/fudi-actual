@@ -13,9 +13,15 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef } from 'react';
 import { searchPlaces, getPlaceDetails } from '../lib/api/places';
 import { upsertRestaurant } from '../lib/api/restaurants';
+import { useAppStore } from '../store';
+import { useProfile } from '../lib/hooks/useProfile';
 import type { PlaceCandidate } from '../lib/api/places';
 
 export default function SelectRestaurantScreen() {
+  const currentUser = useAppStore((s) => s.currentUser);
+  const { data: profile } = useProfile(currentUser?.id);
+  const userCity = (profile as any)?.city ?? null;
+
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<PlaceCandidate[]>([]);
   const [loading, setLoading] = useState(false);
@@ -31,7 +37,7 @@ export default function SelectRestaurantScreen() {
     }
     setLoading(true);
     debounceRef.current = setTimeout(async () => {
-      const places = await searchPlaces(search);
+      const places = await searchPlaces(search, userCity);
       setResults(places);
       setLoading(false);
     }, 400);
@@ -51,6 +57,7 @@ export default function SelectRestaurantScreen() {
           neighborhood: details.vicinity,
           lat: details.geometry.location.lat,
           lng: details.geometry.location.lng,
+          google_types: details.types,
           price_level: details.price_level,
         });
         router.replace(`/journey-b/${row.id}`);

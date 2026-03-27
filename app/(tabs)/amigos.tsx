@@ -24,6 +24,8 @@ import {
   useFollowUser,
   useUnfollowUser,
   useRelationship,
+  useSuggestedUsers,
+  useRejectFollowRequest,
 } from '../../lib/hooks/useProfile';
 import { supabase } from '../../lib/supabase';
 import { createInvitation } from '../../lib/api/users';
@@ -119,29 +121,23 @@ function SearchResultCard({ user, currentUserId }: { user: any; currentUserId: s
 // ─── Pending follower card (someone follows you, you haven't followed back) ───
 
 function FollowRequestCard({ requester, currentUserId }: { requester: any; currentUserId: string }) {
-  const { mutateAsync: follow, isPending } = useFollowUser(currentUserId);
-  const [accepted, setAccepted] = useState(false);
+  const { mutateAsync: follow, isPending: accepting } = useFollowUser(currentUserId);
+  const { mutateAsync: reject, isPending: rejecting } = useRejectFollowRequest(currentUserId);
 
   async function handleAccept() {
     try {
       await follow(requester.id);
-      setAccepted(true);
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'No se pudo aceptar la solicitud.');
     }
   }
 
-  if (accepted) {
-    return (
-      <View style={[styles.requestCard, { backgroundColor: '#f0fad8' }]}>
-        <Avatar uri={requester.avatar_url} size={44} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.searchName}>{requester.name}</Text>
-          <Text style={[styles.searchHandle, { color: '#546b00' }]}>¡Ahora sois amigos!</Text>
-        </View>
-        <MaterialIcons name="check-circle" size={24} color="#546b00" />
-      </View>
-    );
+  async function handleReject() {
+    try {
+      await reject(requester.id);
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'No se pudo rechazar la solicitud.');
+    }
   }
 
   return (
@@ -155,18 +151,34 @@ function FollowRequestCard({ requester, currentUserId }: { requester: any; curre
           {requester.handle ? `@${requester.handle}` : requester.city ?? 'Quiere seguirte'}
         </Text>
       </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.acceptBtn}
-        onPress={handleAccept}
-        disabled={isPending}
-        activeOpacity={0.8}
-      >
-        {isPending ? (
-          <ActivityIndicator size="small" color="#546b00" />
-        ) : (
-          <Text style={styles.acceptBtnText}>Seguir de vuelta</Text>
-        )}
-      </TouchableOpacity>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        {/* Reject */}
+        <TouchableOpacity
+          style={styles.rejectBtn}
+          onPress={handleReject}
+          disabled={accepting || rejecting}
+          activeOpacity={0.8}
+        >
+          {rejecting ? (
+            <ActivityIndicator size="small" color="#727973" />
+          ) : (
+            <MaterialIcons name="close" size={16} color="#727973" />
+          )}
+        </TouchableOpacity>
+        {/* Accept */}
+        <TouchableOpacity
+          style={styles.acceptBtn}
+          onPress={handleAccept}
+          disabled={accepting || rejecting}
+          activeOpacity={0.8}
+        >
+          {accepting ? (
+            <ActivityIndicator size="small" color="#546b00" />
+          ) : (
+            <Text style={styles.acceptBtnText}>Seguir</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -183,7 +195,7 @@ function FriendCard({ friend, isMutual = true }: { friend: any; isMutual?: boole
       {/* Avatar + affinity badge */}
       <View style={{ position: 'relative' }}>
         <View style={styles.avatarContainer}>
-          <Avatar uri={friend.avatar ?? null} size={80} radius={12} />
+          <Avatar uri={friend.avatar ?? null} size={56} radius={10} />
         </View>
         {isMutual && (
           <View style={[styles.affinityBadge, friend.isHighAffinity ? styles.affinityBadgeHigh : styles.affinityBadgeLow]}>
@@ -260,6 +272,7 @@ export default function AmigosScreen() {
   const { data: realFriends, isLoading: loadingFriends } = useFriends(currentUser?.id);
   const { data: followingList, isLoading: loadingFollowing } = useFollowing(currentUser?.id);
   const { data: followRequests, isLoading: loadingRequests } = useFollowRequests(currentUser?.id);
+  const { data: suggestedUsers } = useSuggestedUsers(currentUser?.id);
   const { data: searchResults, isFetching: searching } = useSearchUsers(searchQuery);
 
   const isSearching = searchQuery.trim().length >= 2;
@@ -304,7 +317,14 @@ export default function AmigosScreen() {
     <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={{ width: 48 }} />
+        {/* Saved posts icon */}
+        <TouchableOpacity
+          style={{ width: 48, alignItems: 'flex-start' }}
+          onPress={() => router.push('/saved-posts')}
+          activeOpacity={0.8}
+        >
+          <MaterialIcons name="bookmark-border" size={24} color="#032417" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Amigos</Text>
         <TouchableOpacity
           style={styles.headerRight}
@@ -475,9 +495,21 @@ export default function AmigosScreen() {
               </View>
             </View>
 
+            {/* Descubre usuarios (sugeridos) */}
+            {!isLoading && suggestedUsers && suggestedUsers.length > 0 && (
+              <View style={[styles.section, { marginTop: 8 }]}>
+                <SectionLabel text="DESCUBRE USUARIOS" />
+                <View style={{ gap: 10 }}>
+                  {(suggestedUsers as any[]).slice(0, 6).map((user: any) => (
+                    <SearchResultCard key={user.id} user={user} currentUserId={currentUser?.id ?? ''} />
+                  ))}
+                </View>
+              </View>
+            )}
+
             {/* Siguiendo (one-way) */}
             {!isLoading && displayFollowing.length > 0 && (
-              <View style={[styles.section, { marginTop: 32 }]}>
+              <View style={[styles.section, { marginTop: 8 }]}>
                 <SectionLabel text="SIGUIENDO" count={displayFollowing.length} />
                 <View style={{ gap: 20 }}>
                   {displayFollowing.map((friend) => (
@@ -702,13 +734,23 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 2,
   },
+  rejectBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f1ede6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   acceptBtn: {
     backgroundColor: '#c7ef48',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 999,
-    minWidth: 110,
+    minWidth: 80,
     alignItems: 'center',
+    justifyContent: 'center',
+    height: 36,
   },
   acceptBtnText: {
     fontFamily: 'Manrope-Bold',
@@ -788,9 +830,9 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   avatarContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 12,
+    width: 56,
+    height: 56,
+    borderRadius: 10,
     overflow: 'hidden',
   },
   affinityBadge: {

@@ -56,12 +56,16 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
           >
             <MaterialIcons
               name={tab.icon}
-              size={24}
-              color={isFocused ? '#032417' : '#727973'}
+              size={isFocused ? 22 : 24}
+              color={isFocused ? '#032417' : '#9fa69f'}
             />
-            <Text style={[styles.tabLabel, isFocused && styles.tabLabelActive]}>
-              {tab.label}
-            </Text>
+            {isFocused ? (
+              <Text style={[styles.tabLabel, styles.tabLabelActive]}>
+                {tab.label}
+              </Text>
+            ) : (
+              <View style={styles.tabDot} />
+            )}
           </TouchableOpacity>
         );
       })}
@@ -125,6 +129,12 @@ const styles = StyleSheet.create({
   },
   tabLabelActive: {
     color: '#032417',
+  },
+  tabDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(114,121,115,0.25)',
   },
 });
 

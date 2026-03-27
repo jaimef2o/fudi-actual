@@ -4,22 +4,36 @@ import {
   ScrollView,
   Image,
   TouchableOpacity,
+  TextInput,
+  Modal,
   StyleSheet,
   Dimensions,
   Platform,
   ActivityIndicator,
+  Alert,
   Share,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
-import { useVisit, useBookmark } from '../../lib/hooks/useVisit';
+import { useVisit, useBookmark, useSavePost, useDeleteVisit, useUpdateVisit } from '../../lib/hooks/useVisit';
+import { useVisitDishes } from '../../lib/hooks/useDishes';
 import { useAppStore } from '../../store';
+import { scorePalette } from '../../lib/sentimentColors';
+import { InfoTag } from '../../components/InfoTag';
+import { getDisplayName } from '../../lib/utils/restaurantName';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CAROUSEL_HEIGHT = SCREEN_HEIGHT * 0.6;
 
+
+function formatSpend(spend: string | null | undefined): string | null {
+  if (!spend) return null;
+  const map: Record<string, string> = { '0-20': '~€0–20pp', '20-35': '~€20–35pp', '35-60': '~€35–60pp', '60+': '~€60+pp' };
+  return map[spend] ?? null;
+}
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -34,29 +48,90 @@ function timeAgo(dateStr: string) {
 export default function VisitScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [activeFrame, setActiveFrame] = useState(0);
-  const [bookmarked, setBookmarked] = useState(false);
+  const [restaurantSaved, setRestaurantSaved] = useState(false);
+  const [postSaved, setPostSaved] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editNote, setEditNote] = useState('');
+  const [editSentiment, setEditSentiment] = useState<'loved' | 'fine' | 'disliked'>('loved');
   const { data: visit, isLoading } = useVisit(id);
+  const { data: visitDishes = [] } = useVisitDishes(id);
   const currentUser = useAppStore((s) => s.currentUser);
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
+  const { mutateAsync: toggleSavePost } = useSavePost(currentUser?.id);
+  const { mutateAsync: deleteVisit, isPending: isDeleting } = useDeleteVisit();
+  const { mutateAsync: updateVisit, isPending: isSavingEdit } = useUpdateVisit();
 
-  async function handleBookmark() {
+  const isOwnPost = !!currentUser?.id && (visit as any)?.user_id === currentUser.id;
+
+  async function handleDelete() {
+    Alert.alert(
+      'Eliminar publicación',
+      '¿Seguro que quieres eliminar esta visita? Esta acción no se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteVisit({ visitId: id!, userId: currentUser!.id });
+              router.back();
+            } catch {
+              Alert.alert('Error', 'No se pudo eliminar la publicación. Inténtalo de nuevo.');
+            }
+          },
+        },
+      ]
+    );
+  }
+
+  async function handleSaveRestaurant() {
     const restaurantId = (visit as any)?.restaurant?.id;
     if (!currentUser?.id || !restaurantId) return;
-    const next = !bookmarked;
-    setBookmarked(next);
+    const next = !restaurantSaved;
+    setRestaurantSaved(next);
     try {
       await toggleBookmark({ restaurantId, save: next });
+    } catch { setRestaurantSaved(!next); }
+  }
+
+  async function handleSavePost() {
+    if (!currentUser?.id || !id) return;
+    const next = !postSaved;
+    setPostSaved(next);
+    try {
+      await toggleSavePost({ visitId: id, save: next });
+    } catch { setPostSaved(!next); }
+  }
+
+  const visitRestaurant = (visit as any)?.restaurant;
+  const resolvedRestaurantName = visitRestaurant ? getDisplayName(visitRestaurant) : 'un restaurante';
+
+  function handleOpenEdit() {
+    setEditNote((visit as any)?.note ?? '');
+    setEditSentiment((visit as any)?.sentiment ?? 'loved');
+    setEditModalOpen(true);
+  }
+
+  async function handleSaveEdit() {
+    if (!id) return;
+    try {
+      await updateVisit({ visitId: id, updates: { note: editNote.trim() || null, sentiment: editSentiment } });
+      setEditModalOpen(false);
     } catch {
-      setBookmarked(!next);
+      Alert.alert('Error', 'No se pudieron guardar los cambios. Inténtalo de nuevo.');
     }
   }
 
   async function handleShare() {
-    const restaurantName = (visit as any)?.restaurant?.name ?? 'un restaurante';
+    const restaurantName = resolvedRestaurantName;
     const score = (visit as any)?.rank_score;
+    const postUrl = `https://fudi.app/visit/${id}`;
     try {
       await Share.share({
-        message: `He visitado ${restaurantName}${score != null ? ` y le he dado un ${score.toFixed(1)}/10` : ''} en fudi. ¡Échale un ojo!`,
+        message: `"${restaurantName}"${score != null ? ` — ${score.toFixed(1)}/10` : ''} en fudi.\n${postUrl}`,
+        url: postUrl,
+        title: `${restaurantName} en fudi`,
       });
     } catch {
       // user dismissed
@@ -66,22 +141,20 @@ export default function VisitScreen() {
   const restaurantPhotos = (visit as any)?.photos
     ?.filter((p: any) => p.type === 'restaurant')
     ?.map((p: any) => p.photo_url) ?? [];
-  const dishPhotos = (visit as any)?.dishes
-    ?.filter((d: any) => d.photos?.[0]?.photo_url)
-    ?.map((d: any) => ({ url: d.photos[0].photo_url, name: d.dish_name, rank: d.rank_position })) ?? [];
+  const dishPhotos: { url: string; name: string; rank: number }[] = [];
 
   // Build carousel frames from real photos
   const realFrames = [
     {
       image: restaurantPhotos[0] ?? (visit as any)?.restaurant?.cover_image_url ?? null,
       type: 'restaurant' as const,
-      title: (visit as any)?.restaurant?.name ?? '',
+      title: resolvedRestaurantName,
       subtitle: (visit as any)?.restaurant?.neighborhood ?? '',
     },
     ...dishPhotos.slice(0, 2).map((d: any, i: number) => ({
       image: d.url,
       type: i === 0 ? ('dish' as const) : ('dish2' as const),
-      badge: i === 0 ? 'Plato Estrella' : undefined,
+      badge: i === 0 ? 'Plato Destacado' : undefined,
       title: d.name,
       subtitle: '',
     })),
@@ -89,7 +162,7 @@ export default function VisitScreen() {
 
   const data = {
     restaurantId: (visit as any)?.restaurant?.id ?? '',
-    restaurantName: (visit as any)?.restaurant?.name ?? '',
+    restaurantName: resolvedRestaurantName,
     restaurantLocation: (visit as any)?.restaurant?.neighborhood ?? '',
     user: {
       name: (visit as any)?.user?.name ?? '',
@@ -97,16 +170,15 @@ export default function VisitScreen() {
       publishedAt: (visit as any)?.visited_at ? timeAgo((visit as any).visited_at) : '',
     },
     score: (visit as any)?.rank_score ?? null,
+    sentiment: (visit as any)?.sentiment ?? null,
     quote: (visit as any)?.note ?? '',
     frames: realFrames,
-    dishes: ((visit as any)?.dishes ?? [])
-      .sort((a: any, b: any) => (a.rank_position ?? 99) - (b.rank_position ?? 99))
-      .map((d: any, i: number) => ({
-        rank: d.rank_position ?? i + 1,
-        name: d.dish_name,
-        note: d.note ?? '',
-        image: d.photos?.[0]?.photo_url ?? null,
-        rankColor: i === 0 ? '#032417' : i === 1 ? '#516600' : 'rgba(81,102,0,0.6)',
+    // visitDishes comes from useVisitDishes — direct query, bypasses nested join issues
+    dishes: visitDishes
+      .filter((d) => d.name?.trim())
+      .map((d) => ({
+        name: d.name,
+        highlighted: d.highlighted ?? false,
       })),
   };
 
@@ -147,8 +219,8 @@ export default function VisitScreen() {
           <MaterialIcons name="arrow-back" size={24} color="#032417" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Publicación</Text>
-        <TouchableOpacity style={styles.headerBtn}>
-          <MaterialIcons name="ios-share" size={22} color="#032417" />
+        <TouchableOpacity style={styles.headerBtn} onPress={isOwnPost ? handleOpenEdit : handleShare}>
+          <MaterialIcons name={isOwnPost ? 'edit' : 'ios-share'} size={22} color="#032417" />
         </TouchableOpacity>
       </View>
 
@@ -253,13 +325,21 @@ export default function VisitScreen() {
               <Text style={styles.publishedAt}>
                 PUBLICADO {data.user.publishedAt.toUpperCase()}
               </Text>
+              {(visit as any)?.spend_per_person ? (
+                <View style={{ marginTop: 4 }}>
+                  <InfoTag value={formatSpend((visit as any).spend_per_person)} />
+                </View>
+              ) : null}
             </View>
-            {data.score != null && (
-              <View style={styles.scoreBadge}>
-                <Text style={styles.scoreNumber}>{data.score.toFixed(1)}</Text>
-                <Text style={styles.scoreLabel}>Puntuación</Text>
-              </View>
-            )}
+            {data.score != null && (() => {
+              const pal = scorePalette(data.score);
+              return (
+                <View style={[styles.scoreBadge, { backgroundColor: pal.badgeBg }]}>
+                  <Text style={[styles.scoreNumber, { color: pal.badgeText }]}>{data.score.toFixed(1)}</Text>
+                  <Text style={[styles.scoreLabel, { color: pal.badgeText, opacity: 0.75 }]}>Puntuación</Text>
+                </View>
+              );
+            })()}
           </View>
 
           {/* Restaurant link */}
@@ -271,12 +351,16 @@ export default function VisitScreen() {
             <MaterialIcons name="restaurant" size={16} color="#032417" />
             <View style={{ flex: 1 }}>
               <Text style={styles.restaurantLinkText}>{data.restaurantName}</Text>
-              {data.restaurantLocation ? (
-                <View style={styles.locationRow}>
-                  <MaterialIcons name="location-on" size={11} color="#727973" />
-                  <Text style={styles.locationText}>{data.restaurantLocation}</Text>
-                </View>
-              ) : null}
+              {(() => {
+                const cuisine = (visit as any)?.restaurant?.cuisine as string | null;
+                const price = (visit as any)?.restaurant?.price_level as string | null;
+                return (cuisine || price) ? (
+                  <View style={{ flexDirection: 'row', gap: 5, marginTop: 4 }}>
+                    <InfoTag value={cuisine} />
+                    <InfoTag value={price} />
+                  </View>
+                ) : null;
+              })()}
             </View>
             <MaterialIcons name="chevron-right" size={18} color="#727973" />
           </TouchableOpacity>
@@ -286,50 +370,179 @@ export default function VisitScreen() {
         </View>
 
         {/* Comanda */}
-        <View style={styles.comandaSection}>
-          <View style={styles.comandaHeader}>
-            <View style={styles.comandaLine} />
-            <Text style={styles.comandaLabel}>Comanda</Text>
-          </View>
+        {data.dishes.length > 0 && (
+          <View style={styles.comandaSection}>
+            <View style={styles.comandaHeader}>
+              <View style={styles.comandaLine} />
+              <Text style={styles.comandaLabel}>Comanda</Text>
+            </View>
 
-          <View style={styles.dishesList}>
-            {data.dishes.map((dish: any) => (
-              <View key={dish.rank} style={styles.dishItem}>
-                <View style={{ position: 'relative', flexShrink: 0 }}>
-                  {dish.image ? (
-                    <Image source={{ uri: dish.image }} style={styles.dishImage} />
-                  ) : (
-                    <View style={[styles.dishImage, { backgroundColor: '#f1ede6', alignItems: 'center', justifyContent: 'center' }]}>
-                      <MaterialIcons name="restaurant-menu" size={28} color="#c1c8c2" />
-                    </View>
-                  )}
-                  <View style={[styles.rankBadge, { backgroundColor: dish.rankColor }]}>
-                    <Text style={styles.rankText}>#{dish.rank}</Text>
-                  </View>
+            <View style={styles.dishesList}>
+              {data.dishes.map((dish: any, i: number) => (
+                <View key={i} style={styles.dishItem}>
+                  {dish.highlighted
+                    ? <Text style={styles.dishStar}>★</Text>
+                    : <View style={styles.dishIconWrap}><MaterialIcons name="restaurant" size={11} color="#c1c8c2" /></View>
+                  }
+                  <Text style={[styles.dishName, dish.highlighted && styles.dishNameHighlighted]}>
+                    {dish.name}
+                  </Text>
                 </View>
-                <View style={{ flex: 1, paddingTop: 4 }}>
-                  <Text style={styles.dishName}>{dish.name}</Text>
-                  <Text style={styles.dishNote}>{dish.note}</Text>
-                </View>
-              </View>
-            ))}
+              ))}
+            </View>
           </View>
-        </View>
+        )}
 
         {/* Action buttons */}
         <View style={styles.actionRow}>
-          <TouchableOpacity style={[styles.actionBtn, styles.saveBtn]} activeOpacity={0.8} onPress={handleBookmark}>
-            <MaterialIcons name={bookmarked ? 'bookmark' : 'bookmark-border'} size={20} color="#ffffff" />
-            <Text style={styles.saveBtnText}>{bookmarked ? 'Guardado' : 'Guardar'}</Text>
+          {/* Save post — bookmark */}
+          <TouchableOpacity
+            style={[styles.actionBtn, postSaved && styles.actionBtnActive]}
+            activeOpacity={0.8}
+            onPress={handleSavePost}
+          >
+            <MaterialIcons
+              name={postSaved ? 'bookmark' : 'bookmark-border'}
+              size={18}
+              color={postSaved ? '#546b00' : '#032417'}
+            />
+            <Text style={[styles.actionBtnText, postSaved && styles.actionBtnTextActive]}>
+              {postSaved ? 'Guardado' : 'Guardar'}
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.actionBtn, styles.shareBtn]} activeOpacity={0.8} onPress={handleShare}>
-            <MaterialIcons name="share" size={20} color="#032417" />
-            <Text style={styles.shareBtnText}>Compartir</Text>
+
+          {/* Save restaurant — heart */}
+          <TouchableOpacity
+            style={[styles.actionBtn, restaurantSaved && styles.actionBtnFav]}
+            activeOpacity={0.8}
+            onPress={handleSaveRestaurant}
+          >
+            <MaterialIcons
+              name={restaurantSaved ? 'favorite' : 'favorite-border'}
+              size={18}
+              color={restaurantSaved ? '#ba1a1a' : '#032417'}
+            />
+            <Text style={[styles.actionBtnText, restaurantSaved && { color: '#ba1a1a' }]}>
+              {restaurantSaved ? 'Guardado' : 'Restaurante'}
+            </Text>
           </TouchableOpacity>
+
+          {/* Edit — only own posts */}
+          {isOwnPost && (
+            <TouchableOpacity
+              style={styles.actionBtnEdit}
+              activeOpacity={0.8}
+              onPress={handleOpenEdit}
+            >
+              <MaterialIcons name="edit" size={18} color="#032417" />
+              <Text style={styles.actionBtnEditText}>Editar</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Delete — only own posts */}
+          {isOwnPost && (
+            <TouchableOpacity
+              style={styles.actionBtnDelete}
+              activeOpacity={0.8}
+              onPress={handleDelete}
+              disabled={isDeleting}
+            >
+              <MaterialIcons name="delete-outline" size={18} color="#ba1a1a" />
+              <Text style={styles.actionBtnDeleteText}>
+                {isDeleting ? 'Eliminando…' : 'Eliminar'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={{ height: 48 }} />
       </ScrollView>
+
+      {/* Edit modal */}
+      <Modal
+        visible={editModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditModalOpen(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => setEditModalOpen(false)}
+          />
+          <View style={styles.editSheet}>
+            {/* Handle */}
+            <View style={styles.editHandle} />
+            <Text style={styles.editTitle}>Editar publicación</Text>
+
+            {/* Sentiment selector */}
+            <Text style={styles.editFieldLabel}>Valoración</Text>
+            <View style={styles.sentimentRow}>
+              {(['loved', 'fine', 'disliked'] as const).map((s) => {
+                const labels = { loved: '😍 Me encantó', fine: '😐 Estuvo bien', disliked: '😕 No me convenció' };
+                const active = editSentiment === s;
+                const colors = { loved: '#c7ef48', fine: '#f7f3ec', disliked: '#fff0f0' };
+                const textColors = { loved: '#546b00', fine: '#032417', disliked: '#ba1a1a' };
+                return (
+                  <TouchableOpacity
+                    key={s}
+                    style={[
+                      styles.sentimentChip,
+                      active && { backgroundColor: colors[s], borderColor: 'transparent' },
+                    ]}
+                    onPress={() => setEditSentiment(s)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.sentimentChipText, active && { color: textColors[s] }]}>
+                      {labels[s]}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Note editor */}
+            <Text style={styles.editFieldLabel}>Nota / frase</Text>
+            <TextInput
+              style={styles.editNoteInput}
+              value={editNote}
+              onChangeText={setEditNote}
+              placeholder="Añade una nota sobre tu visita..."
+              placeholderTextColor="rgba(114,121,115,0.5)"
+              multiline
+              maxLength={280}
+            />
+            <Text style={styles.charCount}>{editNote.length}/280</Text>
+
+            {/* Buttons */}
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+              <TouchableOpacity
+                style={styles.editCancelBtn}
+                onPress={() => setEditModalOpen(false)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.editCancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.editSaveBtn, isSavingEdit && { opacity: 0.7 }]}
+                onPress={handleSaveEdit}
+                activeOpacity={0.8}
+                disabled={isSavingEdit}
+              >
+                {isSavingEdit ? (
+                  <ActivityIndicator size="small" color="#546b00" />
+                ) : (
+                  <Text style={styles.editSaveBtnText}>Guardar cambios</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -500,7 +713,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   scoreBadge: {
-    backgroundColor: '#032417',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
@@ -510,13 +722,11 @@ const styles = StyleSheet.create({
   scoreNumber: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 22,
-    color: '#c7ef48',
     lineHeight: 26,
   },
   scoreLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 9,
-    color: 'rgba(199,239,72,0.75)',
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
@@ -581,52 +791,40 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   dishesList: {
-    gap: 12,
+    gap: 4,
+    marginTop: 8,
   },
   dishItem: {
     flexDirection: 'row',
-    gap: 16,
-    alignItems: 'flex-start',
-    backgroundColor: '#f7f3ec',
-    borderRadius: 16,
-    padding: 16,
-  },
-  dishImage: {
-    width: 96,
-    height: 96,
-    borderRadius: 12,
-  },
-  rankBadge: {
-    position: 'absolute',
-    top: -8,
-    left: -8,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    gap: 10,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(193,200,194,0.15)',
   },
-  rankText: {
+  dishStar: {
     fontFamily: 'Manrope-Bold',
-    fontSize: 11,
-    color: '#ffffff',
+    fontSize: 14,
+    color: '#516600',
+    width: 18,
+    textAlign: 'center',
+  },
+  dishStarGap: {
+    width: 18,
+  },
+  dishIconWrap: {
+    width: 18,
+    alignItems: 'center',
   },
   dishName: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 17,
-    color: '#032417',
-    marginBottom: 6,
+    fontFamily: 'NotoSerif-Regular',
+    fontSize: 15,
+    color: '#1c1c18',
+    flex: 1,
   },
-  dishNote: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 13,
-    color: '#424844',
-    lineHeight: 19,
+  dishNameHighlighted: {
+    color: '#032417',
+    fontFamily: 'NotoSerif-Bold',
   },
   actionRow: {
     flexDirection: 'row',
@@ -635,29 +833,152 @@ const styles = StyleSheet.create({
     paddingTop: 24,
   },
   actionBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 14,
-    borderRadius: 12,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: '#f1ede6',
   },
-  saveBtn: {
-    flex: 2,
-    backgroundColor: '#032417',
+  actionBtnActive: {
+    backgroundColor: '#c7ef48',
   },
-  saveBtnText: {
+  actionBtnFav: {
+    backgroundColor: '#fff0f0',
+  },
+  actionBtnEdit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: '#f1ede6',
+  },
+  actionBtnEditText: {
     fontFamily: 'Manrope-Bold',
-    fontSize: 15,
-    color: '#ffffff',
-  },
-  shareBtn: {
-    flex: 1,
-    backgroundColor: '#ebe8e1',
-  },
-  shareBtnText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 15,
+    fontSize: 13,
     color: '#032417',
+  },
+  actionBtnDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: '#fff0f0',
+  },
+  actionBtnDeleteText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 13,
+    color: '#ba1a1a',
+  },
+  // Edit modal
+  editSheet: {
+    backgroundColor: '#fdf9f2',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 48 : 32,
+    gap: 8,
+  },
+  editHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#c1c8c2',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  editTitle: {
+    fontFamily: 'NotoSerif-Bold',
+    fontSize: 20,
+    color: '#032417',
+    marginBottom: 8,
+  },
+  editFieldLabel: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 10,
+    color: '#727973',
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  sentimentRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  sentimentChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: '#f1ede6',
+    borderWidth: 1,
+    borderColor: 'rgba(193,200,194,0.3)',
+  },
+  sentimentChipText: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 13,
+    color: '#727973',
+  },
+  editNoteInput: {
+    backgroundColor: '#f1ede6',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontFamily: 'NotoSerif-Italic',
+    fontSize: 15,
+    color: '#1c1c18',
+    lineHeight: 22,
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  charCount: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 11,
+    color: '#727973',
+    textAlign: 'right',
+    marginTop: 4,
+  },
+  editCancelBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#f1ede6',
+    alignItems: 'center',
+  },
+  editCancelBtnText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 14,
+    color: '#424844',
+  },
+  editSaveBtn: {
+    flex: 2,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: '#c7ef48',
+    alignItems: 'center',
+  },
+  editSaveBtnText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 14,
+    color: '#546b00',
+  },
+  actionBtnText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 13,
+    color: '#032417',
+  },
+  actionBtnTextActive: {
+    color: '#546b00',
   },
 });

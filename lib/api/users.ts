@@ -54,7 +54,14 @@ export async function getProfile(userId: string): Promise<UserRow | null> {
 
 export async function updateProfile(
   userId: string,
-  updates: { name?: string; bio?: string; city?: string; avatar_url?: string }
+  updates: {
+    name?: string;
+    bio?: string;
+    city?: string;
+    avatar_url?: string;
+    dietary_restrictions?: string[];
+    cuisine_dislikes?: string[];
+  }
 ) {
   const { data, error } = await supabase
     .from('users')
@@ -293,6 +300,103 @@ export async function claimInvitation(token: string, newUserId: string): Promise
   } catch {
     return 'error';
   }
+}
+
+// ─── Reject follow request ───────────────────────────────────────────────────
+
+/**
+ * Reject/dismiss an incoming follow request.
+ * Deletes the relationship row where requester follows you (before you've followed back).
+ */
+export async function rejectFollowRequest(
+  requesterId: string,
+  currentUserId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('relationships')
+    .delete()
+    .eq('user_id', requesterId)
+    .eq('target_id', currentUserId);
+  if (error) throw error;
+}
+
+// ─── Update visit ─────────────────────────────────────────────────────────────
+
+// ─── Follower / Following counts ─────────────────────────────────────────────
+
+export async function getFollowerCount(userId: string): Promise<number> {
+  const { count } = await supabase
+    .from('relationships')
+    .select('*', { count: 'exact', head: true })
+    .eq('target_id', userId);
+  return count ?? 0;
+}
+
+export async function getFollowingCount(userId: string): Promise<number> {
+  const { count } = await supabase
+    .from('relationships')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId);
+  return count ?? 0;
+}
+
+// ─── Suggested users (people with visits that current user doesn't follow) ───
+
+export async function getSuggestedUsers(
+  currentUserId: string,
+  limit = 10
+): Promise<UserRow[]> {
+  // Get IDs already followed (including self)
+  const { data: rels } = await supabase
+    .from('relationships')
+    .select('target_id')
+    .eq('user_id', currentUserId);
+
+  const alreadyFollowing = new Set<string>(
+    [(currentUserId), ...((rels ?? []).map((r: any) => r.target_id))]
+  );
+
+  // Find users with most visits not already followed
+  const { data: visitCounts } = await supabase
+    .from('visits')
+    .select('user_id')
+    .eq('visibility', 'friends');
+
+  if (!visitCounts || visitCounts.length === 0) {
+    // Fallback: just return some recent users
+    const { data } = await supabase
+      .from('users')
+      .select('*')
+      .neq('id', currentUserId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return (data ?? []).filter((u: UserRow) => !alreadyFollowing.has(u.id)).slice(0, limit);
+  }
+
+  // Count visits per user
+  const countMap: Record<string, number> = {};
+  for (const v of visitCounts) {
+    const uid = (v as any).user_id;
+    if (!alreadyFollowing.has(uid)) {
+      countMap[uid] = (countMap[uid] ?? 0) + 1;
+    }
+  }
+
+  const topUserIds = Object.entries(countMap)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, limit)
+    .map(([id]) => id);
+
+  if (topUserIds.length === 0) return [];
+
+  const { data } = await supabase
+    .from('users')
+    .select('*')
+    .in('id', topUserIds);
+
+  // Preserve visit-count order
+  const userMap = new Map((data ?? []).map((u: UserRow) => [u.id, u]));
+  return topUserIds.map((id) => userMap.get(id)).filter(Boolean) as UserRow[];
 }
 
 // Search users by name or handle

@@ -26,7 +26,7 @@ export default function VerifyScreen() {
 
   async function handleVerify(overrideCode?: string) {
     const code = overrideCode ?? otp;
-    if (code.length < 6) return;
+    if (code.length < 8) return;
     setLoading(true);
     const { data, error } = await supabase.auth.verifyOtp({
       email: email!,
@@ -36,7 +36,13 @@ export default function VerifyScreen() {
     setLoading(false);
 
     if (error) {
-      Alert.alert('Código incorrecto', 'El código introducido no es válido. Inténtalo de nuevo.');
+      const expired = error.message?.toLowerCase().includes('expired') || error.message?.toLowerCase().includes('otp');
+      Alert.alert(
+        expired ? 'Código caducado' : 'Código incorrecto',
+        expired
+          ? 'El código ha caducado (válido 10 min). Pulsa "Reenviar email" para recibir uno nuevo.'
+          : 'El código introducido no es válido. Compruébalo o solicita uno nuevo.',
+      );
       setOtp('');
       return;
     }
@@ -97,16 +103,14 @@ export default function VerifyScreen() {
           <TextInput
             ref={inputRef}
             style={styles.otpInput}
-            placeholder="• • • • • •"
+            placeholder="• • • • • • • •"
             placeholderTextColor="#c1c8c2"
             keyboardType="number-pad"
             maxLength={8}
             value={otp}
             onChangeText={(v) => {
               setOtp(v);
-              // Auto-submit at 6 chars (Supabase email OTP) or 8 chars
-              // Pass v directly to avoid stale closure
-              if (v.length === 6 || v.length === 8) handleVerify(v);
+              if (v.length === 8) handleVerify(v);
             }}
             autoFocus
             returnKeyType="done"
@@ -115,13 +119,17 @@ export default function VerifyScreen() {
           />
 
           <TouchableOpacity
-            style={[styles.btn, (otp.length < 6 || loading) && styles.btnDisabled]}
+            style={[styles.btn, (otp.length < 8 || loading) && styles.btnDisabled]}
             activeOpacity={0.85}
             onPress={() => handleVerify()}
-            disabled={otp.length < 6 || loading}
+            disabled={otp.length < 8 || loading}
           >
             {loading ? (
               <ActivityIndicator color="#032417" />
+            ) : otp.length < 8 ? (
+              <Text style={[styles.btnText, { color: '#a8a8a8' }]}>
+                {otp.length === 0 ? 'Introduce el código' : `Faltan ${8 - otp.length} dígitos`}
+              </Text>
             ) : (
               <Text style={styles.btnText}>Verificar →</Text>
             )}

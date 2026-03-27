@@ -9,12 +9,15 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../store';
-import { useCreateVisit } from '../lib/hooks/useVisit';
+import { useCreateVisit, useRestaurantExistingScore } from '../lib/hooks/useVisit';
+import { useProfile } from '../lib/hooks/useProfile';
 import { searchPlaces, getPlaceDetails, getPhotoUrl, extractNeighborhood, type PlaceCandidate } from '../lib/api/places';
 import { upsertRestaurant, getRestaurant } from '../lib/api/restaurants';
 import { pickImage, compressAndUpload } from '../lib/storage';
@@ -28,14 +31,22 @@ const SENTIMENTS = [
 export default function RegistrarVisitaScreen() {
   const { restaurantId: paramRestaurantId } = useLocalSearchParams<{ restaurantId?: string }>();
   const currentUser = useAppStore((s) => s.currentUser);
+  const showToast = useAppStore((s) => s.showToast);
+  const { data: profile } = useProfile(currentUser?.id);
+  const userCity = (profile as any)?.city ?? null;
   const { mutateAsync: createVisit, isPending } = useCreateVisit();
 
   const [sentiment, setSentiment] = useState<'loved' | 'fine' | 'disliked' | null>(null);
-  const [dishes, setDishes] = useState<string[]>(['']);
-  const [dishPhotos, setDishPhotos] = useState<(string | null)[]>([null]); // one per dish slot
+  const [spendPerPerson, setSpendPerPerson] = useState<'0-20' | '20-35' | '35-60' | '60+' | null>(null);
   const [note, setNote] = useState('');
-  const [photos, setPhotos] = useState<string[]>([]);   // restaurant photos
+  const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+
+  // Dish model (v2: free text, binary highlighted, insertion order)
+  type AddedDish = { name: string; highlighted: boolean };
+  const [addedDishes, setAddedDishes] = useState<AddedDish[]>([]);
+  const [dishInputValue, setDishInputValue] = useState('');
+  const dishInputRef = useRef<any>(null);
 
   // Restaurant search
   const [restaurantQuery, setRestaurantQuery] = useState('');
@@ -44,6 +55,9 @@ export default function RegistrarVisitaScreen() {
   const [loadingRestaurant, setLoadingRestaurant] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Check if this restaurant is already in the user's ranking
+  const { data: existingRank } = useRestaurantExistingScore(currentUser?.id, selectedRestaurant?.id);
 
   // If navigated from a specific restaurant (UUID), fetch its real name
   useEffect(() => {
@@ -75,12 +89,12 @@ export default function RegistrarVisitaScreen() {
       return;
     }
     searchTimeout.current = setTimeout(async () => {
-      const results = await searchPlaces(restaurantQuery);
+      const results = await searchPlaces(restaurantQuery, userCity);
       setSuggestions(results);
       setShowSuggestions(results.length > 0);
     }, 350);
     return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
-  }, [restaurantQuery, selectedRestaurant]);
+  }, [restaurantQuery, selectedRestaurant, userCity]);
 
   async function handleSelectPlace(candidate: PlaceCandidate) {
     setShowSuggestions(false);
@@ -119,30 +133,27 @@ export default function RegistrarVisitaScreen() {
     setSelectedRestaurant(null);
     setRestaurantQuery('');
     setSuggestions([]);
+    setAddedDishes([]);
+    setDishInputValue('');
   }
 
-  const addDish = () => {
-    setDishes((prev) => [...prev, '']);
-    setDishPhotos((prev) => [...prev, null]);
-  };
-
-  async function handleDishPhoto(index: number) {
-    const uri = await pickImage({ aspect: [1, 1], allowsEditing: true, quality: 0.8 });
-    if (uri) {
-      setDishPhotos((prev) => {
-        const copy = [...prev];
-        copy[index] = uri;
-        return copy;
-      });
-    }
+  function addDishToList(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (addedDishes.some((d) => d.name.toLowerCase() === trimmed.toLowerCase())) return;
+    setAddedDishes((prev) => [...prev, { name: trimmed, highlighted: false }]);
+    setDishInputValue('');
+    dishInputRef.current?.focus();
   }
 
-  function removeDishPhoto(index: number) {
-    setDishPhotos((prev) => {
-      const copy = [...prev];
-      copy[index] = null;
-      return copy;
-    });
+  function toggleHighlight(index: number) {
+    setAddedDishes((prev) =>
+      prev.map((d, i) => i === index ? { ...d, highlighted: !d.highlighted } : d)
+    );
+  }
+
+  function removeDishFromList(index: number) {
+    setAddedDishes((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function handleAddPhoto() {
@@ -167,72 +178,72 @@ export default function RegistrarVisitaScreen() {
       Alert.alert('Falta el restaurante', 'Selecciona un restaurante antes de continuar.');
       return;
     }
-    if (!sentiment) return;
+    if (!sentiment) {
+      Alert.alert('Falta tu valoración', 'Elige cómo estuvo la visita antes de continuar.');
+      return;
+    }
 
-    const validDishIndices = dishes
-      .map((d, i) => ({ name: d.trim(), idx: i }))
-      .filter((d) => d.name.length > 0);
+    Keyboard.dismiss();
+
+    // Flush any dish typed but not yet added
+    const pendingDish = dishInputValue.trim();
+    let finalDishes = addedDishes;
+    if (pendingDish && !addedDishes.some((d) => d.name.toLowerCase() === pendingDish.toLowerCase())) {
+      finalDishes = [...addedDishes, { name: pendingDish, highlighted: false }];
+      setAddedDishes(finalDishes);
+      setDishInputValue('');
+    }
 
     try {
       setUploading(true);
       const ts = Date.now();
 
-      // Upload restaurant photos
+      // Upload restaurant photos — surface errors to user
       const uploadedRestaurantUrls: string[] = [];
       for (let i = 0; i < photos.length; i++) {
-        try {
-          const url = await compressAndUpload(photos[i], `visits/${currentUser.id}/${ts}_r${i}.jpg`);
-          uploadedRestaurantUrls.push(url);
-        } catch { /* skip */ }
-      }
-
-      // Upload dish photos (keyed by original dish index)
-      const uploadedDishUrls: Record<number, string> = {};
-      for (const { idx } of validDishIndices) {
-        const localUri = dishPhotos[idx];
-        if (!localUri) continue;
-        try {
-          const url = await compressAndUpload(localUri, `visits/${currentUser.id}/${ts}_d${idx}.jpg`);
-          uploadedDishUrls[idx] = url;
-        } catch { /* skip */ }
+        const url = await compressAndUpload(
+          photos[i],
+          `visits/${currentUser.id}/${ts}_r${i}.jpg`,
+        );
+        uploadedRestaurantUrls.push(url);
       }
 
       setUploading(false);
-
-      const validDishes = validDishIndices.map(({ name, idx }, pos) => ({
-        dish_name: name,
-        rank_position: pos + 1,
-        photo_url: uploadedDishUrls[idx] ?? undefined,
-      }));
 
       const visit = await createVisit({
         user_id: currentUser.id,
         restaurant_id: selectedRestaurant.id,
         sentiment,
         note: note.trim() || undefined,
-        dishes: validDishes,
+        spend_per_person: spendPerPerson ?? null,
+        dishes: finalDishes.map((d, i) => ({ name: d.name, highlighted: d.highlighted, position: i })),
         photos: uploadedRestaurantUrls.map((url) => ({ photo_url: url, type: 'restaurant' as const })),
         visibility: 'friends',
       });
 
-      router.push(
-        `/comparison/${visit.id}?restaurantName=${encodeURIComponent(selectedRestaurant.name)}`
+      router.navigate(
+        `/comparison/${visit.id}?restaurantName=${encodeURIComponent(selectedRestaurant.name)}&sentiment=${sentiment}`
       );
     } catch (e: any) {
       setUploading(false);
-      Alert.alert('Error al guardar', e.message ?? 'No se pudo guardar la visita. Inténtalo de nuevo.');
+      const msg = e?.message ?? e?.error_description ?? JSON.stringify(e) ?? 'Error desconocido';
+      Alert.alert('Error al guardar', msg, [{ text: 'OK' }]);
     }
   }
 
   const isSubmitting = isPending || uploading;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: '#fdf9f2' }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => {
-            const hasData = selectedRestaurant || sentiment || note.trim() || dishes.some((d) => d.trim()) || photos.length > 0;
+            const hasData = selectedRestaurant || sentiment || note.trim() || addedDishes.length > 0 || photos.length > 0 || dishInputValue.trim().length > 0;
             if (!hasData) { router.back(); return; }
             Alert.alert(
               'Descartar cambios',
@@ -257,9 +268,9 @@ export default function RegistrarVisitaScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {/* RESTAURANTE */}
-        <View style={styles.section}>
+        <View style={[styles.section, { zIndex: 200, elevation: 200 }]}>
           <Text style={styles.sectionLabel}>RESTAURANTE</Text>
-          <View style={{ position: 'relative', zIndex: 10 }}>
+          <View style={{ position: 'relative', zIndex: 200 }}>
             <View style={[styles.searchBox, selectedRestaurant && styles.searchBoxSelected]}>
               {loadingRestaurant ? (
                 <ActivityIndicator size="small" color="#727973" />
@@ -320,6 +331,19 @@ export default function RegistrarVisitaScreen() {
             </View>
           )}
         </View>
+
+        {/* Already-ranked banner */}
+        {existingRank && (
+          <View style={styles.existingRankBanner}>
+            <MaterialIcons name="repeat" size={16} color="#516600" />
+            <Text style={styles.existingRankText}>
+              Ya tienes <Text style={{ fontFamily: 'Manrope-Bold' }}>{selectedRestaurant?.name}</Text> en tu ranking con un{' '}
+              <Text style={{ fontFamily: 'Manrope-Bold' }}>{existingRank.score.toFixed(1)}</Text>
+              {existingRank.visitCount > 1 ? ` (media de ${existingRank.visitCount} visitas)` : ''}.
+              {' '}Esta visita actualizará tu nota.
+            </Text>
+          </View>
+        )}
 
         {/* ¿CÓMO ESTUVO? */}
         <View style={styles.section}>
@@ -382,69 +406,72 @@ export default function RegistrarVisitaScreen() {
         {/* PLATOS */}
         <View style={styles.section}>
           <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionLabel}>PLATOS</Text>
+            <Text style={styles.sectionLabel}>¿QUÉ PEDISTE?</Text>
             <Text style={styles.optionalText}>Opcional</Text>
           </View>
-          {dishes.map((_, i) => (
-            <View key={i} style={styles.dishRowWrap}>
-              <View style={styles.dishRow}>
-                <View style={styles.dishRankCircle}>
-                  <Text style={styles.dishRankText}>{i + 1}</Text>
-                </View>
+
+          {selectedRestaurant ? (
+            <>
+              {/* Free-text input */}
+              <View style={styles.dishInputRow}>
                 <TextInput
-                  style={styles.dishInput}
-                  placeholder="Nombre del plato..."
+                  ref={dishInputRef}
+                  style={styles.dishFreeInput}
+                  placeholder="Añade un plato..."
                   placeholderTextColor="#c1c8c2"
-                  value={dishes[i]}
-                  onChangeText={(v) => {
-                    const copy = [...dishes];
-                    copy[i] = v;
-                    setDishes(copy);
-                  }}
-                  returnKeyType="next"
+                  value={dishInputValue}
+                  onChangeText={setDishInputValue}
+                  returnKeyType="done"
+                  onSubmitEditing={() => addDishToList(dishInputValue)}
+                  blurOnSubmit={false}
                 />
-                {/* Dish photo button */}
-                <TouchableOpacity
-                  onPress={() => handleDishPhoto(i)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={styles.dishPhotoBtn}
-                >
-                  {dishPhotos[i] ? (
-                    <Image source={{ uri: dishPhotos[i]! }} style={styles.dishPhotoThumb} />
-                  ) : (
-                    <MaterialIcons name="add-a-photo" size={18} color="#727973" />
-                  )}
-                </TouchableOpacity>
-                {dishes.length > 1 && (
+                {dishInputValue.trim().length > 0 && (
                   <TouchableOpacity
-                    onPress={() => {
-                      setDishes(dishes.filter((_, idx) => idx !== i));
-                      setDishPhotos(dishPhotos.filter((_, idx) => idx !== i));
-                    }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.dishAddBtn}
+                    onPress={() => addDishToList(dishInputValue)}
+                    activeOpacity={0.8}
                   >
-                    <MaterialIcons name="remove-circle-outline" size={20} color="#c1c8c2" />
+                    <MaterialIcons name="add" size={20} color="#032417" />
                   </TouchableOpacity>
                 )}
               </View>
-              {/* Photo preview + remove */}
-              {dishPhotos[i] && (
-                <View style={styles.dishPhotoPreviewRow}>
-                  <Image source={{ uri: dishPhotos[i]! }} style={styles.dishPhotoPreview} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.dishPhotoPreviewLabel}>Foto del plato añadida</Text>
-                    <TouchableOpacity onPress={() => removeDishPhoto(i)} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
-                      <Text style={styles.dishPhotoRemoveText}>Eliminar foto</Text>
-                    </TouchableOpacity>
-                  </View>
+
+              {/* List of added dishes */}
+              {addedDishes.length > 0 && (
+                <View style={styles.addedDishesSection}>
+                  {addedDishes.map((d, i) => (
+                    <View key={i} style={styles.addedDishRow}>
+                      {/* Star toggle */}
+                      <TouchableOpacity
+                        style={[styles.starBtn, d.highlighted && styles.starBtnActive]}
+                        onPress={() => toggleHighlight(i)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[styles.starBtnText, d.highlighted && styles.starBtnTextActive]}>★</Text>
+                      </TouchableOpacity>
+
+                      <Text style={[styles.addedDishName, d.highlighted && styles.addedDishNameHighlighted]} numberOfLines={1}>
+                        {d.name}
+                      </Text>
+
+                      <TouchableOpacity
+                        onPress={() => removeDishFromList(i)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        activeOpacity={0.75}
+                      >
+                        <MaterialIcons name="close" size={16} color="#c1c8c2" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
                 </View>
               )}
-            </View>
-          ))}
-          <TouchableOpacity style={styles.addDishBtn} onPress={addDish} activeOpacity={0.7}>
-            <MaterialIcons name="add" size={20} color="#032417" />
-            <Text style={styles.addDishText}>Añadir plato</Text>
-          </TouchableOpacity>
+            </>
+          ) : (
+            <Text style={styles.dishNoRestaurantHint}>
+              Selecciona primero un restaurante para añadir platos
+            </Text>
+          )}
         </View>
 
         {/* NOTA */}
@@ -462,10 +489,62 @@ export default function RegistrarVisitaScreen() {
             value={note}
             onChangeText={setNote}
             textAlignVertical="top"
+            returnKeyType="done"
+            blurOnSubmit
+            onSubmitEditing={Keyboard.dismiss}
           />
         </View>
 
+        {/* GASTO POR PERSONA */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionLabel}>¿CUÁNTO GASTASTEIS POR PERSONA?</Text>
+            <Text style={styles.optionalText}>Opcional</Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {(['0-20', '20-35', '35-60', '60+'] as const).map((option) => {
+              const active = spendPerPerson === option;
+              const labels: Record<string, string> = {
+                '0-20': '€0–20',
+                '20-35': '€20–35',
+                '35-60': '€35–60',
+                '60+': '€60+',
+              };
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={{
+                    paddingHorizontal: 20,
+                    paddingVertical: 11,
+                    borderRadius: 999,
+                    backgroundColor: active ? '#c7ef48' : '#ebe8e1',
+                  }}
+                  onPress={() => setSpendPerPerson(active ? null : option)}
+                  activeOpacity={0.75}
+                >
+                  <Text style={{
+                    fontFamily: 'NotoSerif-Bold',
+                    fontSize: 15,
+                    color: active ? '#546b00' : '#424844',
+                  }}>
+                    {labels[option]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
         {/* CTA */}
+        {/* Missing fields hint */}
+        {(!selectedRestaurant || !sentiment) && (
+          <View style={{ backgroundColor: '#f7f3ec', borderRadius: 12, padding: 12, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <MaterialIcons name="info-outline" size={16} color="#727973" />
+            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973', flex: 1 }}>
+              {!selectedRestaurant ? 'Selecciona un restaurante para continuar.' : 'Elige cómo estuvo la visita.'}
+            </Text>
+          </View>
+        )}
         <TouchableOpacity
           style={[styles.ctaBtn, (!sentiment || !selectedRestaurant || isSubmitting) && styles.ctaBtnDisabled]}
           activeOpacity={0.85}
@@ -475,22 +554,22 @@ export default function RegistrarVisitaScreen() {
           {isSubmitting ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <ActivityIndicator color="#ffffff" size="small" />
-              <Text style={styles.ctaBtnText}>
+              <Text style={[styles.ctaBtnText, { color: '#ffffff' }]}>
                 {uploading ? 'Subiendo fotos...' : 'Guardando...'}
               </Text>
             </View>
           ) : (
-            <Text style={styles.ctaBtnText}>
+            <Text style={[styles.ctaBtnText, (!sentiment || !selectedRestaurant) && { color: '#727973' }]}>
               {!selectedRestaurant
-                ? 'Selecciona un restaurante'
+                ? '— Selecciona restaurante —'
                 : !sentiment
-                ? 'Elige cómo estuvo para continuar'
+                ? '— Elige cómo estuvo —'
                 : 'Guardar y ubicar en ranking →'}
             </Text>
           )}
         </TouchableOpacity>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -519,6 +598,22 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
     paddingHorizontal: 24,
     gap: 8,
+  },
+  existingRankBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#eaf3d0',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 4,
+  },
+  existingRankText: {
+    flex: 1,
+    fontFamily: 'Manrope-Regular',
+    fontSize: 12,
+    color: '#3a5000',
+    lineHeight: 17,
   },
   section: {
     marginBottom: 20,
@@ -572,10 +667,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     shadowColor: '#1c1c18',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.10,
+    shadowOpacity: 0.12,
     shadowRadius: 20,
-    elevation: 8,
-    zIndex: 100,
+    elevation: 200,
+    zIndex: 200,
     overflow: 'hidden',
   },
   dropdownItem: {
@@ -682,95 +777,80 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 14,
   },
-  // Dishes
-  dishRowWrap: {
-    gap: 0,
-  },
-  dishRow: {
+  // ── Dish input (v2: free text, no autocomplete) ───────────────────────────
+  dishInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
     backgroundColor: '#f7f3ec',
     borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 2,
+    gap: 4,
   },
-  dishPhotoBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#ebe8e1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  dishPhotoThumb: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-  },
-  dishPhotoPreviewRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#f0fad8',
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
-    marginTop: 2,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  dishPhotoPreview: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-  },
-  dishPhotoPreviewLabel: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 12,
-    color: '#546b00',
-  },
-  dishPhotoRemoveText: {
-    fontFamily: 'Manrope-Medium',
-    fontSize: 11,
-    color: '#7a2020',
-    marginTop: 2,
-  },
-  dishRankCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#e6e2db',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dishRankText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 11,
-    color: '#424844',
-  },
-  dishInput: {
+  dishFreeInput: {
     flex: 1,
     fontFamily: 'Manrope-Regular',
     fontSize: 14,
     color: '#1c1c18',
+    paddingVertical: 12,
   },
-  addDishBtn: {
-    flexDirection: 'row',
+  dishAddBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#c7ef48',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    borderWidth: 2,
-    borderColor: 'rgba(193,200,194,0.5)',
-    borderStyle: 'dashed',
-    borderRadius: 12,
-    paddingVertical: 14,
   },
-  addDishText: {
+  addedDishesSection: {
+    gap: 0,
+    marginTop: 4,
+  },
+  addedDishRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1ede6',
+  },
+  starBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#f1ede6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  starBtnActive: {
+    backgroundColor: '#c7ef48',
+  },
+  starBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
+    color: '#c1c8c2',
+  },
+  starBtnTextActive: {
+    color: '#546b00',
+  },
+  addedDishName: {
+    flex: 1,
+    fontFamily: 'Manrope-Medium',
+    fontSize: 14,
+    color: '#1c1c18',
+  },
+  addedDishNameHighlighted: {
+    fontFamily: 'Manrope-SemiBold',
     color: '#032417',
   },
+  dishNoRestaurantHint: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 13,
+    color: '#c1c8c2',
+    textAlign: 'center',
+    paddingVertical: 12,
+  },
+  // ── End dish input ─────────────────────────────────────────────────────────
   noteInput: {
     backgroundColor: '#f7f3ec',
     borderRadius: 12,

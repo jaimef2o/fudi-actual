@@ -7,21 +7,26 @@ import {
   StyleSheet,
   Platform,
   Modal,
+  KeyboardAvoidingView,
   ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import Svg, { Circle } from 'react-native-svg';
-import { CUISINE_CATEGORIES, CUISINE_ICONS, PRICE_LEVELS, type CuisineCategory, type PriceLevel } from './(tabs)/descubrir';
 import { CityPicker } from '../components/CityPicker';
+import { PRICE_SYMBOLS } from '../components/PriceFilterChips';
+import { InfoTag } from '../components/InfoTag';
 import { useAppStore } from '../store';
 import { useUserRanking } from '../lib/hooks/useVisit';
+import { sentimentPalette } from '../lib/sentimentColors';
+import { getDisplayName } from '../lib/utils/restaurantName';
 
-function MiniCircularScore({ score }: { score: number }) {
+function MiniCircularScore({ score, sentiment }: { score: number; sentiment?: string | null }) {
   const radius = 18;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference * (1 - score / 10);
+  const pal = sentimentPalette(sentiment as any);
 
   return (
     <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
@@ -31,7 +36,7 @@ function MiniCircularScore({ score }: { score: number }) {
           cx={24}
           cy={24}
           r={radius}
-          stroke="#516600"
+          stroke={pal.ring}
           strokeWidth={3}
           fill="transparent"
           strokeDasharray={circumference}
@@ -39,31 +44,44 @@ function MiniCircularScore({ score }: { score: number }) {
           strokeLinecap="round"
         />
       </Svg>
-      <Text style={styles.miniScoreText}>{score.toFixed(1)}</Text>
+      <Text style={[styles.miniScoreText, { color: pal.badgeText }]}>{score.toFixed(1)}</Text>
     </View>
   );
 }
 
-function priceLevelToSymbol(level: number | null | undefined): PriceLevel | null {
-  if (level === 1) return '$';
-  if (level === 2) return '$$';
-  if (level === 3 || level === 4) return '$$$';
-  return null;
-}
+const PRICE_DESCS: Record<string, string> = {
+  '€':    '0 – 20€ pp',
+  '€€':   '20 – 35€ pp',
+  '€€€':  '35 – 60€ pp',
+  '€€€€': '60€+ pp',
+};
 
 export default function RankingScreen() {
   const currentUser = useAppStore((s) => s.currentUser);
   const { data: ranking = [], isLoading, isError, refetch } = useUserRanking(currentUser?.id);
 
-  const [activeCuisine, setActiveCuisine] = useState<CuisineCategory | 'Todo'>('Todo');
-  const [draftCuisine, setDraftCuisine] = useState<CuisineCategory | 'Todo'>('Todo');
-  const [activePrice, setActivePrice] = useState<PriceLevel | 'Todo'>('Todo');
-  const [draftPrice, setDraftPrice] = useState<PriceLevel | 'Todo'>('Todo');
-  const [cuisineOpen, setCuisineOpen] = useState(false);
-  const [priceOpen, setPriceOpen] = useState(false);
-  const [activeCity, setActiveCity] = useState<string>('');
-  const [draftCity, setDraftCity] = useState<string>('');
-  const [cityOpen, setCityOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [activeCity, setActiveCity] = useState('');
+  const [activePrice, setActivePrice] = useState('');
+  const [draftCity, setDraftCity] = useState('');
+  const [draftPrice, setDraftPrice] = useState('');
+
+  function openFilter() {
+    setDraftCity(activeCity);
+    setDraftPrice(activePrice);
+    setFilterOpen(true);
+  }
+  function applyFilter() {
+    setActiveCity(draftCity);
+    setActivePrice(draftPrice);
+    setFilterOpen(false);
+  }
+  function resetFilter() {
+    setDraftCity('');
+    setDraftPrice('');
+  }
+
+  const totalFilters = (activeCity.trim() !== '' ? 1 : 0) + (activePrice !== '' ? 1 : 0);
 
   // Map real visits to display format
   const restaurants = ranking.map((v) => ({
@@ -73,7 +91,7 @@ export default function RankingScreen() {
     neighborhood: (v.restaurant as any).neighborhood as string | null,
     city: (v.restaurant as any).city as string | null,
     cuisine: (v.restaurant as any).cuisine as string | null,
-    price: priceLevelToSymbol((v.restaurant as any).price_level),
+    price: (v.restaurant as any).price_level as string | null,
     score: v.rank_score ?? 0,
     image: (v.restaurant as any).cover_image_url as string | null,
     sentiment: v.sentiment,
@@ -81,18 +99,9 @@ export default function RankingScreen() {
 
   const filteredRestaurants = restaurants
     .filter((r) => activeCity.trim() === '' || (r.city ?? '').toLowerCase().includes(activeCity.trim().toLowerCase()))
-    .filter((r) => activeCuisine === 'Todo' || r.cuisine === activeCuisine)
-    .filter((r) => activePrice === 'Todo' || r.price === activePrice)
+    .filter((r) => activePrice === '' || r.price === activePrice)
     .slice()
     .sort((a, b) => b.score - a.score);
-
-  const totalFilters = (activeCity.trim() !== '' ? 1 : 0) + (activeCuisine !== 'Todo' ? 1 : 0) + (activePrice !== 'Todo' ? 1 : 0);
-
-  const PRICE_DESCS: Record<PriceLevel, string> = {
-    '$': 'Menos de 20€',
-    '$$': '20€ – 50€',
-    '$$$': 'Más de 50€',
-  };
 
   if (isError) {
     return (
@@ -100,9 +109,6 @@ export default function RankingScreen() {
         <MaterialIcons name="error-outline" size={48} color="#c1c8c2" />
         <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417', textAlign: 'center' }}>
           Error al cargar tu ranking
-        </Text>
-        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center' }}>
-          Comprueba tu conexión e inténtalo de nuevo.
         </Text>
         <TouchableOpacity
           onPress={() => refetch()}
@@ -125,137 +131,78 @@ export default function RankingScreen() {
           <MaterialIcons name="arrow-back" size={24} color="#032417" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Ranking</Text>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity
+          style={styles.rankBtn}
+          activeOpacity={0.8}
+          onPress={() => router.push('/refine-ranking')}
+        >
+          <MaterialIcons name="tune" size={16} color="#032417" />
+          <Text style={styles.rankBtnText}>Rank</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Cuisine filter modal */}
-      <Modal visible={cuisineOpen} animationType="slide" transparent onRequestClose={() => setCuisineOpen(false)}>
-        <TouchableOpacity style={modalStyles.backdrop} activeOpacity={1} onPress={() => setCuisineOpen(false)} />
-        <View style={modalStyles.sheet}>
-          <View style={modalStyles.handle} />
-          <View style={modalStyles.sheetHeader}>
-            <Text style={modalStyles.sheetTitle}>Tipo de cocina</Text>
-            {draftCuisine !== 'Todo' && (
-              <TouchableOpacity onPress={() => setDraftCuisine('Todo')}>
-                <Text style={modalStyles.resetText}>Resetear</Text>
+      {/* Filter modal — unified */}
+      <Modal visible={filterOpen} animationType="slide" transparent onRequestClose={() => setFilterOpen(false)}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableOpacity style={ms.backdrop} activeOpacity={1} onPress={() => setFilterOpen(false)} />
+          <View style={ms.sheet}>
+            <View style={ms.handle} />
+            <View style={ms.sheetHeader}>
+              <TouchableOpacity onPress={resetFilter}>
+                <Text style={ms.resetText}>Resetear</Text>
               </TouchableOpacity>
-            )}
-          </View>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <View style={modalStyles.chipGrid}>
-              {(['Todo', ...CUISINE_CATEGORIES] as const).map((c) => {
-                const active = draftCuisine === c;
-                return (
-                  <TouchableOpacity
-                    key={c}
-                    style={[modalStyles.chip, active && modalStyles.chipActive]}
-                    onPress={() => setDraftCuisine(c)}
-                    activeOpacity={0.75}
-                  >
-                    {c !== 'Todo' && (
-                      <MaterialIcons
-                        name={CUISINE_ICONS[c as CuisineCategory] as any}
-                        size={14}
-                        color={active ? '#546b00' : '#727973'}
-                      />
-                    )}
-                    <Text style={[modalStyles.chipText, active && modalStyles.chipTextActive]}>{c}</Text>
-                  </TouchableOpacity>
-                );
-              })}
+              <Text style={ms.sheetTitle}>Filtros</Text>
+              <TouchableOpacity onPress={() => setFilterOpen(false)}>
+                <MaterialIcons name="close" size={22} color="#032417" />
+              </TouchableOpacity>
             </View>
-          </ScrollView>
-          <TouchableOpacity
-            style={modalStyles.applyBtn}
-            activeOpacity={0.85}
-            onPress={() => { setActiveCuisine(draftCuisine); setCuisineOpen(false); }}
-          >
-            <Text style={modalStyles.applyText}>
-              {draftCuisine === 'Todo' ? 'Ver todos' : `Ver ${draftCuisine}`}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
 
-      {/* Price filter modal */}
-      <Modal visible={priceOpen} animationType="slide" transparent onRequestClose={() => setPriceOpen(false)}>
-        <TouchableOpacity style={modalStyles.backdrop} activeOpacity={1} onPress={() => setPriceOpen(false)} />
-        <View style={modalStyles.sheet}>
-          <View style={modalStyles.handle} />
-          <View style={modalStyles.sheetHeader}>
-            <Text style={modalStyles.sheetTitle}>Precio</Text>
-            {draftPrice !== 'Todo' && (
-              <TouchableOpacity onPress={() => setDraftPrice('Todo')}>
-                <Text style={modalStyles.resetText}>Resetear</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          <View style={{ gap: 8, paddingBottom: 16 }}>
-            {(['Todo', ...PRICE_LEVELS] as const).map((p) => {
-              const active = draftPrice === p;
-              return (
-                <TouchableOpacity
-                  key={p}
-                  style={[modalStyles.priceRow, active && modalStyles.priceRowActive]}
-                  onPress={() => setDraftPrice(p)}
-                  activeOpacity={0.75}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[modalStyles.priceLabel, active && modalStyles.priceLabelActive]}>
-                      {p === 'Todo' ? 'Todos los precios' : p}
-                    </Text>
-                    {p !== 'Todo' && (
-                      <Text style={modalStyles.priceDesc}>{PRICE_DESCS[p as PriceLevel]}</Text>
-                    )}
-                  </View>
-                  {active && <MaterialIcons name="check" size={18} color="#546b00" />}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          <TouchableOpacity
-            style={modalStyles.applyBtn}
-            activeOpacity={0.85}
-            onPress={() => { setActivePrice(draftPrice); setPriceOpen(false); }}
-          >
-            <Text style={modalStyles.applyText}>
-              {draftPrice === 'Todo' ? 'Ver todos' : `Ver precio ${draftPrice}`}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Ciudad */}
+              <View style={ms.sectionRow}>
+                <Text style={ms.sectionLabel}>Ciudad</Text>
+                <View style={{ flex: 1 }}>
+                  <CityPicker
+                    value={draftCity}
+                    onChange={setDraftCity}
+                    placeholder="Ej: Madrid, Barcelona..."
+                  />
+                </View>
+              </View>
 
-      {/* City filter modal */}
-      <Modal visible={cityOpen} animationType="slide" transparent onRequestClose={() => setCityOpen(false)}>
-        <TouchableOpacity style={modalStyles.backdrop} activeOpacity={1} onPress={() => setCityOpen(false)} />
-        <View style={modalStyles.sheet}>
-          <View style={modalStyles.handle} />
-          <View style={modalStyles.sheetHeader}>
-            <Text style={modalStyles.sheetTitle}>Ciudad</Text>
-            {draftCity.trim() !== '' && (
-              <TouchableOpacity onPress={() => setDraftCity('')}>
-                <Text style={modalStyles.resetText}>Borrar</Text>
-              </TouchableOpacity>
-            )}
+              {/* Divider */}
+              <View style={ms.divider} />
+
+              {/* Precio */}
+              <View style={ms.sectionRow}>
+                <Text style={ms.sectionLabel}>Precio</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 8, paddingRight: 4 }} keyboardShouldPersistTaps="handled">
+                  {PRICE_SYMBOLS.map((p) => {
+                    const active = draftPrice === p;
+                    return (
+                      <TouchableOpacity
+                        key={p}
+                        style={[ms.priceBtn, active && ms.priceBtnActive]}
+                        onPress={() => setDraftPrice(active ? '' : p)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={[ms.priceBtnSymbol, active && ms.priceBtnSymbolActive]}>{p}</Text>
+                        <Text style={[ms.priceBtnDesc, active && ms.priceBtnDescActive]}>{PRICE_DESCS[p]}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </ScrollView>
+
+            <TouchableOpacity style={ms.applyBtn} activeOpacity={0.85} onPress={applyFilter}>
+              <Text style={ms.applyBtnText}>Ver resultados</Text>
+            </TouchableOpacity>
           </View>
-          <View style={{ marginBottom: 16, zIndex: 10 }}>
-            <CityPicker
-              value={draftCity}
-              onChange={setDraftCity}
-              placeholder="Ej: Madrid, Barcelona, París..."
-              autoFocus
-            />
-          </View>
-          <TouchableOpacity
-            style={modalStyles.applyBtn}
-            activeOpacity={0.85}
-            onPress={() => { setActiveCity(draftCity); setCityOpen(false); }}
-          >
-            <Text style={modalStyles.applyText}>
-              {draftCity.trim() === '' ? 'Ver todas las ciudades' : `Ver ${draftCity}`}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {isLoading && (
@@ -263,144 +210,118 @@ export default function RankingScreen() {
           <ActivityIndicator size="large" color="#032417" />
         </View>
       )}
-      {!isLoading && <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-        {/* Controls row */}
-        <View style={styles.controlsRow}>
-          <TouchableOpacity
-            style={[styles.controlBtn, activeCity.trim() !== '' && styles.controlBtnCityActive]}
-            onPress={() => { setDraftCity(activeCity); setCityOpen(true); }}
-            activeOpacity={0.75}
-          >
-            <MaterialIcons name="location-on" size={14} color={activeCity.trim() !== '' ? '#c7ef48' : '#727973'} />
-            <Text style={[styles.controlBtnText, activeCity.trim() !== '' && styles.controlBtnTextCity]} numberOfLines={1}>
-              {activeCity.trim() !== '' ? activeCity : 'Ciudad'}
-              {activeCity.trim() !== '' ? ' ✓' : ' ⚙'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.controlBtn, activeCuisine !== 'Todo' && styles.controlBtnActive]}
-            onPress={() => { setDraftCuisine(activeCuisine); setCuisineOpen(true); }}
-            activeOpacity={0.75}
-          >
-            <MaterialIcons
-              name={CUISINE_ICONS['Española & Tapas'] as any}
-              size={14}
-              color={activeCuisine !== 'Todo' ? '#546b00' : '#727973'}
-            />
-            <Text style={[styles.controlBtnText, activeCuisine !== 'Todo' && styles.controlBtnTextActive]} numberOfLines={1}>
-              {activeCuisine !== 'Todo' ? activeCuisine.split(' ')[0] : 'Cocina'}
-              {activeCuisine !== 'Todo' ? ' ✓' : ' ⚙'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.controlBtn, activePrice !== 'Todo' && styles.controlBtnActive]}
-            onPress={() => { setDraftPrice(activePrice); setPriceOpen(true); }}
-            activeOpacity={0.75}
-          >
-            <MaterialIcons name="attach-money" size={14} color={activePrice !== 'Todo' ? '#546b00' : '#727973'} />
-            <Text style={[styles.controlBtnText, activePrice !== 'Todo' && styles.controlBtnTextActive]} numberOfLines={1}>
-              {activePrice !== 'Todo' ? activePrice : 'Precio'}
-              {activePrice !== 'Todo' ? ' ✓' : ' ⚙'}
-            </Text>
-          </TouchableOpacity>
-        </View>
 
-        {/* Active filter pills */}
-        {totalFilters > 0 && (
-          <View style={styles.activePillsRow}>
-            {activeCity.trim() !== '' && (
+      {!isLoading && (
+        <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+          {/* Controls row */}
+          <View style={styles.controlsRow}>
+            <TouchableOpacity
+              style={[styles.controlBtn, totalFilters > 0 && styles.controlBtnActive]}
+              onPress={openFilter}
+              activeOpacity={0.75}
+            >
+              <MaterialIcons name="tune" size={15} color={totalFilters > 0 ? '#546b00' : '#424844'} />
+              <Text style={[styles.controlBtnText, totalFilters > 0 && styles.controlBtnTextActive]}>
+                Filtros{totalFilters > 0 ? ` (${totalFilters})` : ''}
+              </Text>
+            </TouchableOpacity>
+            {totalFilters > 0 && (
               <TouchableOpacity
-                style={[styles.activePill, { backgroundColor: '#1a3a2b' }]}
-                onPress={() => setActiveCity('')}
+                style={styles.clearBtn}
+                onPress={() => { setActiveCity(''); setActivePrice(''); }}
               >
-                <MaterialIcons name="location-on" size={13} color="#c7ef48" />
-                <Text style={[styles.activePillText, { color: '#c7ef48' }]}>{activeCity}</Text>
-                <MaterialIcons name="close" size={13} color="#c7ef48" />
-              </TouchableOpacity>
-            )}
-            {activeCuisine !== 'Todo' && (
-              <TouchableOpacity style={styles.activePill} onPress={() => setActiveCuisine('Todo')}>
-                <Text style={styles.activePillText}>{activeCuisine}</Text>
-                <MaterialIcons name="close" size={13} color="#546b00" />
-              </TouchableOpacity>
-            )}
-            {activePrice !== 'Todo' && (
-              <TouchableOpacity style={styles.activePill} onPress={() => setActivePrice('Todo')}>
-                <Text style={styles.activePillText}>{activePrice}</Text>
-                <MaterialIcons name="close" size={13} color="#546b00" />
+                <MaterialIcons name="close" size={14} color="#546b00" />
               </TouchableOpacity>
             )}
           </View>
-        )}
 
-        {/* Ranking list — sorted by score */}
-        <View style={styles.list}>
-          {filteredRestaurants.length === 0 && (
-            <View style={styles.emptyState}>
-              <MaterialIcons name={restaurants.length === 0 ? 'restaurant' : 'search-off'} size={40} color="#c1c8c2" />
-              <Text style={styles.emptyTitle}>
-                {restaurants.length === 0 ? 'Aún no has visitado nada' : 'Sin resultados'}
-              </Text>
-              <Text style={styles.emptyText}>
-                {restaurants.length === 0
-                  ? 'Registra tu primera visita para empezar tu ranking.'
-                  : 'No tienes restaurantes con estos filtros.'}
-              </Text>
-              {restaurants.length === 0 && (
+          {/* Active filter pills */}
+          {totalFilters > 0 && (
+            <View style={styles.activePillsRow}>
+              {activeCity.trim() !== '' && (
                 <TouchableOpacity
-                  style={{ marginTop: 16, backgroundColor: '#032417', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 12 }}
-                  onPress={() => router.push('/registrar-visita')}
+                  style={[styles.activePill, { backgroundColor: '#1a3a2b' }]}
+                  onPress={() => setActiveCity('')}
                 >
-                  <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>
-                    Registrar visita
-                  </Text>
+                  <MaterialIcons name="location-on" size={13} color="#c7ef48" />
+                  <Text style={[styles.activePillText, { color: '#c7ef48' }]}>{activeCity}</Text>
+                  <MaterialIcons name="close" size={13} color="#c7ef48" />
+                </TouchableOpacity>
+              )}
+              {activePrice !== '' && (
+                <TouchableOpacity style={styles.activePill} onPress={() => setActivePrice('')}>
+                  <Text style={styles.activePillText}>{activePrice}</Text>
+                  <MaterialIcons name="close" size={13} color="#546b00" />
                 </TouchableOpacity>
               )}
             </View>
           )}
-          {filteredRestaurants.map((restaurant, idx) => (
-            <TouchableOpacity
-              key={restaurant.id}
-              style={styles.rankItem}
-              activeOpacity={0.82}
-              onPress={() => router.push(`/restaurant/${restaurant.restaurantId}`)}
-            >
-              <View style={styles.rankItemMain}>
-                {/* Image + rank number */}
-                <View style={{ position: 'relative' }}>
-                  {restaurant.image ? (
-                    <Image source={{ uri: restaurant.image }} style={styles.rankImage} />
-                  ) : (
-                    <View style={[styles.rankImage, styles.rankImagePlaceholder]}>
-                      <MaterialIcons name="restaurant" size={20} color="#424844" />
-                    </View>
-                  )}
-                  <View style={[styles.rankNumber, idx === 0 ? styles.rankNumber1 : styles.rankNumberOther]}>
-                    <Text style={[styles.rankNumberText, idx === 0 ? styles.rankNumberText1 : styles.rankNumberTextOther]}>
-                      {idx + 1}
+
+          {/* Ranking list */}
+          <View style={styles.list}>
+            {filteredRestaurants.length === 0 && (
+              <View style={styles.emptyState}>
+                <MaterialIcons name={restaurants.length === 0 ? 'restaurant' : 'search-off'} size={40} color="#c1c8c2" />
+                <Text style={styles.emptyTitle}>
+                  {restaurants.length === 0 ? 'Aún no has visitado nada' : 'Sin resultados'}
+                </Text>
+                <Text style={styles.emptyText}>
+                  {restaurants.length === 0
+                    ? 'Registra tu primera visita para empezar tu ranking.'
+                    : 'No tienes restaurantes con estos filtros.'}
+                </Text>
+                {restaurants.length === 0 && (
+                  <TouchableOpacity
+                    style={{ marginTop: 16, backgroundColor: '#032417', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 12 }}
+                    onPress={() => router.push('/registrar-visita')}
+                  >
+                    <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>
+                      Registrar visita
                     </Text>
-                  </View>
-                </View>
-
-                {/* Info */}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rankName} numberOfLines={1} ellipsizeMode="tail">{restaurant.name}</Text>
-                  <Text style={styles.rankMeta} numberOfLines={1} ellipsizeMode="tail">
-                    {[restaurant.neighborhood, restaurant.city].filter(Boolean).join(' · ')}
-                  </Text>
-                  {restaurant.price && (
-                    <Text style={styles.rankPrice}>{restaurant.price}</Text>
-                  )}
-                </View>
-
-                {/* Score */}
-                <MiniCircularScore score={restaurant.score} />
+                  </TouchableOpacity>
+                )}
               </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>}
+            )}
+            {filteredRestaurants.map((restaurant, idx) => (
+              <TouchableOpacity
+                key={restaurant.id}
+                style={styles.rankItem}
+                activeOpacity={0.82}
+                onPress={() => router.push(`/restaurant/${restaurant.restaurantId}`)}
+              >
+                <View style={styles.rankItemMain}>
+                  <View style={{ position: 'relative' }}>
+                    {restaurant.image ? (
+                      <Image source={{ uri: restaurant.image }} style={styles.rankImage} />
+                    ) : (
+                      <View style={[styles.rankImage, styles.rankImagePlaceholder]}>
+                        <MaterialIcons name="restaurant" size={20} color="#424844" />
+                      </View>
+                    )}
+                    <View style={[styles.rankNumber, idx === 0 ? styles.rankNumber1 : styles.rankNumberOther]}>
+                      <Text style={[styles.rankNumberText, idx === 0 ? styles.rankNumberText1 : styles.rankNumberTextOther]}>
+                        {idx + 1}
+                      </Text>
+                    </View>
+                  </View>
 
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rankName} numberOfLines={1} ellipsizeMode="tail">{getDisplayName(restaurant as any)}</Text>
+                    {(restaurant.cuisine || restaurant.price) ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
+                        <InfoTag value={restaurant.cuisine} />
+                        <InfoTag value={restaurant.price} />
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <MiniCircularScore score={restaurant.score} sentiment={restaurant.sentiment} />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -428,6 +349,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#032417',
   },
+  rankBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#c7ef48',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  rankBtnText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 13,
+    color: '#032417',
+  },
   container: {
     paddingTop: Platform.OS === 'ios' ? 124 : 104,
     paddingBottom: 40,
@@ -435,17 +370,16 @@ const styles = StyleSheet.create({
   },
   controlsRow: {
     flexDirection: 'row',
-    gap: 10,
+    alignItems: 'center',
+    gap: 8,
     marginBottom: 12,
   },
   controlBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 6,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     borderRadius: 999,
     backgroundColor: '#f7f3ec',
     borderWidth: 1,
@@ -453,22 +387,23 @@ const styles = StyleSheet.create({
   },
   controlBtnActive: {
     backgroundColor: '#c7ef48',
-    borderColor: '#c7ef48',
-  },
-  controlBtnCityActive: {
-    backgroundColor: '#1a3a2b',
-    borderColor: '#1a3a2b',
-  },
-  controlBtnTextCity: {
-    color: '#c7ef48',
+    borderColor: '#aed52e',
   },
   controlBtnText: {
     fontFamily: 'Manrope-Bold',
-    fontSize: 13,
+    fontSize: 11,
     color: '#424844',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  controlBtnTextActive: {
-    color: '#546b00',
+  controlBtnTextActive: { color: '#546b00' },
+  clearBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    backgroundColor: '#c7ef48',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   activePillsRow: {
     flexDirection: 'row',
@@ -490,9 +425,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#546b00',
   },
-  list: {
-    gap: 10,
-  },
+  list: { gap: 10 },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 48,
@@ -557,19 +490,7 @@ const styles = StyleSheet.create({
     fontFamily: 'NotoSerif-Bold',
     fontSize: 16,
     color: '#032417',
-    marginBottom: 2,
-  },
-  rankMeta: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 12,
-    color: '#424844',
-  },
-  rankPrice: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 12,
-    color: '#516600',
-    marginTop: 3,
-    letterSpacing: 0.5,
+    marginBottom: 5,
   },
   miniScoreText: {
     position: 'absolute',
@@ -579,100 +500,67 @@ const styles = StyleSheet.create({
   },
 });
 
-const modalStyles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(3,36,23,0.3)',
-  },
+const ms = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
     backgroundColor: '#fdf9f2',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 48 : 32,
-    paddingTop: 12,
+    paddingHorizontal: 24,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
     maxHeight: '80%',
   },
   handle: {
-    width: 36,
+    width: 40,
     height: 4,
+    backgroundColor: '#e6e2db',
     borderRadius: 2,
-    backgroundColor: '#c1c8c2',
     alignSelf: 'center',
-    marginBottom: 16,
+    marginVertical: 14,
   },
   sheetHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 24,
   },
-  sheetTitle: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 20,
-    color: '#032417',
-  },
-  resetText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 13,
-    color: '#727973',
-    textDecorationLine: 'underline',
-  },
-  chipGrid: {
+  sheetTitle: { fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417' },
+  resetText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#727973', textDecorationLine: 'underline' },
+  sectionRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 20,
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 16,
   },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: '#f7f3ec',
-  },
-  chipActive: { backgroundColor: '#c7ef48' },
-  chipText: {
-    fontFamily: 'Manrope-Medium',
-    fontSize: 13,
-    color: '#424844',
-  },
-  chipTextActive: {
+  sectionLabel: {
     fontFamily: 'Manrope-Bold',
-    color: '#546b00',
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: '#f7f3ec',
-  },
-  priceRowActive: { backgroundColor: '#c7ef48' },
-  priceLabel: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 15,
-    color: '#032417',
-  },
-  priceLabelActive: { color: '#546b00' },
-  priceDesc: {
-    fontFamily: 'Manrope-Regular',
     fontSize: 12,
     color: '#727973',
-    marginTop: 2,
+    paddingTop: 14,
+    width: 48,
+    flexShrink: 0,
   },
-  applyBtn: {
-    marginTop: 8,
-    backgroundColor: '#032417',
-    paddingVertical: 16,
-    borderRadius: 16,
+  divider: { height: 1, backgroundColor: '#ebe8e1', marginBottom: 16 },
+  priceBtn: {
     alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: '#f1ede6',
+    minWidth: 60,
+    gap: 2,
   },
-  applyText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 15,
-    color: '#ffffff',
+  priceBtnActive: { backgroundColor: '#c7ef48' },
+  priceBtnSymbol: { fontFamily: 'NotoSerif-Bold', fontSize: 15, color: '#424844' },
+  priceBtnSymbolActive: { color: '#032417' },
+  priceBtnDesc: { fontFamily: 'Manrope-Medium', fontSize: 9, color: '#727973', textAlign: 'center' },
+  priceBtnDescActive: { color: '#546b00' },
+  applyBtn: {
+    backgroundColor: '#032417',
+    borderRadius: 999,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 8,
   },
+  applyBtnText: { fontFamily: 'Manrope-Bold', fontSize: 15, color: '#ffffff', letterSpacing: 0.5 },
 });
