@@ -220,11 +220,10 @@ export default function ProfileScreen() {
   const allUserPosts = (userFeedData?.pages ?? []).flatMap((p) => p);
   const publicaciones = allUserPosts.map((post: any) => {
     const userPhoto = (post.photos ?? []).find((p: any) => p?.photo_url)?.photo_url ?? null;
-    // Fallback to restaurant cover image from Google Places
-    const image = userPhoto ?? post.restaurant?.cover_image_url ?? null;
     return {
       id: post.id,
-      image,
+      image: userPhoto,
+      coverImage: post.restaurant?.cover_image_url ?? null,
       restaurantName: post.restaurant?.name ?? '',
       score: post.rank_score ?? null,
     };
@@ -504,7 +503,9 @@ function FavoritosTab({
   );
 }
 
-function PublicacionesTab({ posts }: { posts: { id: string; image: string | null; restaurantName: string; score: number | null }[] }) {
+function PublicacionesTab({ posts }: { posts: { id: string; image: string | null; coverImage: string | null; restaurantName: string; score: number | null }[] }) {
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
+
   if (posts.length === 0) {
     return (
       <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 10 }}>
@@ -538,8 +539,15 @@ function PublicacionesTab({ posts }: { posts: { id: string; image: string | null
           activeOpacity={0.9}
           onPress={() => router.push(`/visit/${post.id}`)}
         >
-          {post.image ? (
-            <Image source={{ uri: post.image }} style={styles.gridImage} resizeMode="cover" />
+          {(post.image && !failedIds.has(post.id)) || post.coverImage ? (
+            <Image
+              source={{ uri: (post.image && !failedIds.has(post.id)) ? post.image : post.coverImage! }}
+              style={styles.gridImage}
+              resizeMode="cover"
+              onError={() => {
+                if (post.image) setFailedIds((prev) => new Set(prev).add(post.id));
+              }}
+            />
           ) : (
             // No-photo fallback — editorial cream card
             <View style={styles.gridImagePlaceholder}>

@@ -417,20 +417,8 @@ export default function RestaurantScreen() {
           )}
         </View>
 
-        <View style={{ height: 130 }} />
+        <View style={{ height: 40 }} />
       </ScrollView>
-
-      {/* Sticky CTA */}
-      <View style={s.ctaWrapper}>
-        <TouchableOpacity
-          style={s.ctaBtn}
-          activeOpacity={0.88}
-          onPress={() => router.push(`/journey-b/${id}`)}
-        >
-          <MaterialIcons name="restaurant-menu" size={20} color="#ffffff" />
-          <Text style={s.ctaBtnText}>¿Qué pedimos?</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }

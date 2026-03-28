@@ -3,7 +3,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Pressable,
   TextInput,
   StyleSheet,
   Platform,
@@ -18,7 +17,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../store';
 import { useCreateVisit, useRestaurantExistingScore } from '../lib/hooks/useVisit';
-import { useProfile, useFriends } from '../lib/hooks/useProfile';
+import { useProfile } from '../lib/hooks/useProfile';
+import { searchUsers } from '../lib/api/users';
 import { searchPlaces, getPlaceDetails, getPhotoUrl, extractNeighborhood, type PlaceCandidate } from '../lib/api/places';
 import { upsertRestaurant, getRestaurant } from '../lib/api/restaurants';
 import { pickImage, compressAndUpload } from '../lib/storage';
@@ -37,15 +37,17 @@ export default function RegistrarVisitaScreen() {
   const userCity = (profile as any)?.city ?? null;
   const { mutateAsync: createVisit, isPending } = useCreateVisit();
 
-  const { data: friendsRaw = [] } = useFriends(currentUser?.id);
-
   const [sentiment, setSentiment] = useState<'loved' | 'fine' | 'disliked' | null>(null);
   const [spendPerPerson, setSpendPerPerson] = useState<'0-20' | '20-35' | '35-60' | '60+' | null>(null);
   const [note, setNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [taggedUserIds, setTaggedUserIds] = useState<string[]>([]);
-  const [companionSearch, setCompanionSearch] = useState('');
+  const [taggedUsers, setTaggedUsers] = useState<{ id: string; name: string; handle: string | null; avatar_url: string | null }[]>([]);
+  const [handleInput, setHandleInput] = useState('');
+  const [handleResults, setHandleResults] = useState<any[]>([]);
+  const [handleSearching, setHandleSearching] = useState(false);
+  const handleTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Dish model (v2: free text, binary highlighted, insertion order)
   type AddedDish = { name: string; highlighted: boolean; photo: string | null };
@@ -294,7 +296,7 @@ export default function RegistrarVisitaScreen() {
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
       >
         {/* RESTAURANTE */}
         <View style={styles.section}>
@@ -329,14 +331,15 @@ export default function RegistrarVisitaScreen() {
               )}
             </View>
 
-            {/* Suggestions dropdown — inline (not absolute) for reliable touch handling */}
+            {/* Suggestions dropdown */}
             {showSuggestions && (
               <View style={styles.dropdown}>
                 {suggestions.map((s) => (
-                  <Pressable
+                  <TouchableOpacity
                     key={s.place_id}
-                    style={({ pressed }) => [styles.dropdownItem, pressed && { backgroundColor: '#f7f3ec' }]}
+                    style={styles.dropdownItem}
                     onPress={() => handleSelectPlace(s)}
+                    activeOpacity={0.7}
                   >
                     <MaterialIcons name="restaurant" size={16} color="#727973" style={{ marginTop: 2 }} />
                     <View style={{ flex: 1 }}>
@@ -347,31 +350,12 @@ export default function RegistrarVisitaScreen() {
                         {s.structured_formatting.secondary_text}
                       </Text>
                     </View>
-                  </Pressable>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
           </View>
-          {selectedRestaurant && (
-            <View style={styles.selectedBadge}>
-              <MaterialIcons name="check-circle" size={14} color="#546b00" />
-              <Text style={styles.selectedBadgeText}>{selectedRestaurant.name}</Text>
-            </View>
-          )}
         </View>
-
-        {/* Already-ranked banner */}
-        {existingRank && (
-          <View style={styles.existingRankBanner}>
-            <MaterialIcons name="repeat" size={16} color="#516600" />
-            <Text style={styles.existingRankText}>
-              Ya tienes <Text style={{ fontFamily: 'Manrope-Bold' }}>{selectedRestaurant?.name}</Text> en tu ranking con un{' '}
-              <Text style={{ fontFamily: 'Manrope-Bold' }}>{existingRank.score.toFixed(1)}</Text>
-              {existingRank.visitCount > 1 ? ` (media de ${existingRank.visitCount} visitas)` : ''}.
-              {' '}Esta visita actualizará tu nota.
-            </Text>
-          </View>
-        )}
 
         {/* ¿CÓMO ESTUVO? */}
         <View style={styles.section}>
@@ -588,82 +572,104 @@ export default function RegistrarVisitaScreen() {
         </View>
 
         {/* ACOMPAÑANTES */}
-        {(friendsRaw as any[]).length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionLabel}>ACOMPAÑANTES</Text>
-              <Text style={styles.optionalText}>
-                Opcional{taggedUserIds.length > 0 ? ` · ${taggedUserIds.length} etiquetado${taggedUserIds.length > 1 ? 's' : ''}` : ''}
-              </Text>
-            </View>
-
-            {/* Search */}
-            {(friendsRaw as any[]).length > 4 && (
-              <View style={[styles.searchBox, { marginBottom: 4 }]}>
-                <MaterialIcons name="search" size={18} color="#727973" />
-                <TextInput
-                  style={[styles.searchInput, { fontSize: 14 }]}
-                  placeholder="Buscar amigo..."
-                  placeholderTextColor="#c1c8c2"
-                  value={companionSearch}
-                  onChangeText={setCompanionSearch}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {companionSearch.length > 0 && (
-                  <TouchableOpacity onPress={() => setCompanionSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <MaterialIcons name="close" size={16} color="#727973" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-
-            {/* Friend chips */}
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {(friendsRaw as any[])
-                .filter((f: any) => {
-                  const name: string = f.friend?.name ?? '';
-                  return companionSearch.length === 0 || name.toLowerCase().includes(companionSearch.toLowerCase());
-                })
-                .map((f: any) => {
-                  const friend = f.friend as any;
-                  const isTagged = taggedUserIds.includes(friend.id);
-                  return (
-                    <TouchableOpacity
-                      key={friend.id}
-                      style={[
-                        styles.companionChip,
-                        isTagged && styles.companionChipActive,
-                      ]}
-                      onPress={() =>
-                        setTaggedUserIds((prev) =>
-                          isTagged ? prev.filter((id) => id !== friend.id) : [...prev, friend.id]
-                        )
-                      }
-                      activeOpacity={0.75}
-                    >
-                      {friend.avatar_url ? (
-                        <Image
-                          source={{ uri: friend.avatar_url }}
-                          style={styles.companionAvatar}
-                        />
-                      ) : (
-                        <View style={[styles.companionAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-                          <MaterialIcons name="person" size={12} color="#727973" />
-                        </View>
-                      )}
-                      <Text style={[styles.companionName, isTagged && styles.companionNameActive]} numberOfLines={1}>
-                        {friend.name}
-                      </Text>
-                      {isTagged && (
-                        <MaterialIcons name="check" size={14} color="#546b00" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-            </View>
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionLabel}>ACOMPAÑANTES</Text>
+            <Text style={styles.optionalText}>Opcional</Text>
           </View>
-        )}
+
+          {/* Handle input */}
+          <View style={styles.searchBox}>
+            <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 15, color: '#727973' }}>@</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="handle del acompañante"
+              placeholderTextColor="#c1c8c2"
+              value={handleInput}
+              onChangeText={(v) => {
+                const clean = v.replace(/^@/, '').toLowerCase();
+                setHandleInput(clean);
+                if (handleTimeout.current) clearTimeout(handleTimeout.current);
+                if (clean.length < 2) { setHandleResults([]); return; }
+                setHandleSearching(true);
+                handleTimeout.current = setTimeout(async () => {
+                  try {
+                    const results = await searchUsers(clean);
+                    setHandleResults(results.filter((u: any) => u.id !== currentUser?.id && !taggedUserIds.includes(u.id)));
+                  } catch { /* silent */ } finally { setHandleSearching(false); }
+                }, 350);
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {handleSearching && <ActivityIndicator size="small" color="#727973" />}
+            {handleInput.length > 0 && !handleSearching && (
+              <TouchableOpacity onPress={() => { setHandleInput(''); setHandleResults([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <MaterialIcons name="close" size={16} color="#727973" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Search results dropdown */}
+          {handleResults.length > 0 && (
+            <View style={styles.dropdown}>
+              {handleResults.slice(0, 5).map((u: any) => (
+                <TouchableOpacity
+                  key={u.id}
+                  style={styles.dropdownItem}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    setTaggedUserIds((prev) => [...prev, u.id]);
+                    setTaggedUsers((prev) => [...prev, { id: u.id, name: u.name, handle: u.handle, avatar_url: u.avatar_url }]);
+                    setHandleInput('');
+                    setHandleResults([]);
+                  }}
+                >
+                  {u.avatar_url ? (
+                    <Image source={{ uri: u.avatar_url }} style={styles.companionAvatar} />
+                  ) : (
+                    <View style={[styles.companionAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
+                      <MaterialIcons name="person" size={12} color="#727973" />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dropdownMain} numberOfLines={1}>{u.name}</Text>
+                    {u.handle && <Text style={styles.dropdownSub}>@{u.handle}</Text>}
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Tagged companions chips */}
+          {taggedUsers.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {taggedUsers.map((u) => (
+                <TouchableOpacity
+                  key={u.id}
+                  style={styles.companionChipActive}
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    setTaggedUserIds((prev) => prev.filter((id) => id !== u.id));
+                    setTaggedUsers((prev) => prev.filter((t) => t.id !== u.id));
+                  }}
+                >
+                  {u.avatar_url ? (
+                    <Image source={{ uri: u.avatar_url }} style={styles.companionAvatar} />
+                  ) : (
+                    <View style={[styles.companionAvatar, { backgroundColor: '#c7ef48', alignItems: 'center', justifyContent: 'center' }]}>
+                      <MaterialIcons name="person" size={12} color="#032417" />
+                    </View>
+                  )}
+                  <Text style={styles.companionNameActive} numberOfLines={1}>
+                    {u.handle ? `@${u.handle}` : u.name}
+                  </Text>
+                  <MaterialIcons name="close" size={13} color="#546b00" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
 
         {/* CTA */}
         {/* Missing fields hint */}
@@ -1001,18 +1007,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#ffffff',
   },
-  companionChip: {
+  companionChipActive: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: '#f1ede6',
-    maxWidth: 160,
-  },
-  companionChipActive: {
     backgroundColor: '#e8f5c8',
+    maxWidth: 200,
   },
   companionAvatar: {
     width: 22,
