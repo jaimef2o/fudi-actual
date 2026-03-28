@@ -3,6 +3,7 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   TextInput,
   StyleSheet,
   Platform,
@@ -268,9 +269,9 @@ export default function RegistrarVisitaScreen() {
         keyboardShouldPersistTaps="handled"
       >
         {/* RESTAURANTE */}
-        <View style={[styles.section, { zIndex: 200, elevation: 200 }]}>
+        <View style={styles.section}>
           <Text style={styles.sectionLabel}>RESTAURANTE</Text>
-          <View style={{ position: 'relative', zIndex: 200 }}>
+          <View>
             <View style={[styles.searchBox, selectedRestaurant && styles.searchBoxSelected]}>
               {loadingRestaurant ? (
                 <ActivityIndicator size="small" color="#727973" />
@@ -300,15 +301,14 @@ export default function RegistrarVisitaScreen() {
               )}
             </View>
 
-            {/* Suggestions dropdown */}
+            {/* Suggestions dropdown — inline (not absolute) for reliable touch handling */}
             {showSuggestions && (
               <View style={styles.dropdown}>
                 {suggestions.map((s) => (
-                  <TouchableOpacity
+                  <Pressable
                     key={s.place_id}
-                    style={styles.dropdownItem}
+                    style={({ pressed }) => [styles.dropdownItem, pressed && { backgroundColor: '#f7f3ec' }]}
                     onPress={() => handleSelectPlace(s)}
-                    activeOpacity={0.75}
                   >
                     <MaterialIcons name="restaurant" size={16} color="#727973" style={{ marginTop: 2 }} />
                     <View style={{ flex: 1 }}>
@@ -319,7 +319,7 @@ export default function RegistrarVisitaScreen() {
                         {s.structured_formatting.secondary_text}
                       </Text>
                     </View>
-                  </TouchableOpacity>
+                  </Pressable>
                 ))}
               </View>
             )}
@@ -658,19 +658,14 @@ const styles = StyleSheet.create({
     color: '#1c1c18',
   },
   dropdown: {
-    position: 'absolute',
-    top: '100%',
-    left: 0,
-    right: 0,
     backgroundColor: '#ffffff',
     borderRadius: 12,
-    marginTop: 4,
+    marginTop: 6,
     shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 20,
-    elevation: 200,
-    zIndex: 200,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.10,
+    shadowRadius: 16,
+    elevation: 4,
     overflow: 'hidden',
   },
   dropdownItem: {

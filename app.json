@@ -21,6 +21,7 @@
         "applinks:fudi.app"
       ],
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "fudi usa la cámara para fotografiar tus platos.",
         "NSPhotoLibraryUsageDescription": "fudi accede a tus fotos para añadir imágenes a tus visitas.",
         "NSContactsUsageDescription": "fudi usa tus contactos para encontrar amigos.",
@@ -40,9 +41,9 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.VIBRATE"
-      ],
-      "googleServicesFile": "./google-services.json"
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -72,8 +73,10 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
-      }
-    }
+        "projectId": "8a241d05-0e5e-4e38-8e41-43263c028886"
+      },
+      "router": {}
+    },
+    "owner": "jaimefdez"
   }
 }

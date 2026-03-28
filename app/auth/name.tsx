@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useState, useEffect, useRef } from 'react';
+import { MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import {
   nameToHandle,
@@ -98,10 +99,10 @@ export default function NameScreen() {
       return <ActivityIndicator size="small" color="#727973" style={styles.indicator} />;
     }
     if (handleStatus === 'available') {
-      return <Text style={[styles.indicator, styles.indicatorOk]}>✓</Text>;
+      return <MaterialIcons name="check-circle" size={20} color="#516600" style={styles.indicator} />;
     }
     if (handleStatus === 'taken' || handleStatus === 'invalid') {
-      return <Text style={[styles.indicator, styles.indicatorError]}>✗</Text>;
+      return <MaterialIcons name="cancel" size={20} color="#ba1a1a" style={styles.indicator} />;
     }
     return null;
   }
@@ -276,16 +277,7 @@ const styles = StyleSheet.create({
     color: '#1c1c18',
   },
   indicator: {
-    paddingHorizontal: 14,
-    fontSize: 18,
-  },
-  indicatorOk: {
-    color: '#516600',
-    fontWeight: 'bold',
-  },
-  indicatorError: {
-    color: '#ba1a1a',
-    fontWeight: 'bold',
+    paddingHorizontal: 12,
   },
   hintText: {
     fontFamily: 'Manrope-Regular',

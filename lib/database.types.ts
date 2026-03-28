@@ -690,3 +690,14 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
+// ── Convenience type aliases ────────────────────────────────────────────────
+export type UserRow = Database['public']['Tables']['users']['Row'];
+export type UserInsert = Database['public']['Tables']['users']['Insert'];
+export type UserUpdate = Database['public']['Tables']['users']['Update'];
+export type RestaurantRow = Database['public']['Tables']['restaurants']['Row'];
+export type RestaurantInsert = Database['public']['Tables']['restaurants']['Insert'];
+export type VisitRow = Database['public']['Tables']['visits']['Row'];
+export type VisitInsert = Database['public']['Tables']['visits']['Insert'];
+export type ReactionRow = Database['public']['Tables']['reactions']['Row'];
+export type RelationshipRow = Database['public']['Tables']['relationships']['Row'];

@@ -2,6 +2,7 @@ import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Platform } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import { useFonts } from 'expo-font';
@@ -84,7 +85,7 @@ function ErrorFallback() {
           justifyContent: 'center',
         }}
       >
-        <Text style={{ fontSize: 32 }}>🍽️</Text>
+        <MaterialIcons name="restaurant" size={32} color="#1c1c18" />
       </View>
       <Text
         style={{
@@ -205,6 +206,8 @@ export default function RootLayout() {
           setCurrentUser(null);
           setMonitoringUser(null);
           queryClient.clear();
+          // Dismiss any modals/pushed screens, then replace to auth root
+          try { router.dismissAll(); } catch {}
           router.replace('/auth');
         }
       }
@@ -235,6 +238,7 @@ export default function RootLayout() {
         <Stack.Screen name="invite/[token]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="saved-posts" options={{ headerShown: false, presentation: 'card' }} />
         <Stack.Screen name="refine-ranking" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'card' }} />
       </Stack>
     </QueryClientProvider>
   );

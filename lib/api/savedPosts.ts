@@ -5,7 +5,8 @@ export async function savePost(userId: string, visitId: string): Promise<void> {
   const { error } = await supabase
     .from('saved_visits')
     .insert({ user_id: userId, visit_id: visitId });
-  if (error && !error.message.includes('duplicate')) throw error;
+  // Code '23505' = unique_violation (post already saved) — safe to ignore
+  if (error && error.code !== '23505') throw error;
 }
 
 export async function unsavePost(userId: string, visitId: string): Promise<void> {

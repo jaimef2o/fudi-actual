@@ -310,8 +310,12 @@ export default function SettingsScreen() {
           text: 'Cerrar sesión',
           style: 'destructive',
           onPress: async () => {
-            await supabase.auth.signOut();
-            router.replace('/auth');
+            try {
+              await supabase.auth.signOut();
+              // onAuthStateChange in _layout.tsx handles navigation reset
+            } catch {
+              Alert.alert('Error', 'No se pudo cerrar sesión. Inténtalo de nuevo.');
+            }
           },
         },
       ]

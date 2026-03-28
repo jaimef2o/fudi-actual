@@ -140,6 +140,14 @@ create table if not exists public.invitations (
   claimed_at          timestamptz
 );
 
+create table if not exists public.saved_visits (
+  id         uuid primary key default uuid_generate_v4(),
+  user_id    uuid not null references public.users(id) on delete cascade,
+  visit_id   uuid not null references public.visits(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (user_id, visit_id)
+);
+
 -- ── TRIGGER: crear fila en users cuando se registra un auth.user ──
 
 create or replace function public.handle_new_user()
@@ -174,6 +182,7 @@ alter table public.reactions      enable row level security;
 alter table public.lists          enable row level security;
 alter table public.list_items     enable row level security;
 alter table public.invitations    enable row level security;
+alter table public.saved_visits   enable row level security;
 
 -- USERS: cada uno ve todos los perfiles (app social), edita solo el suyo
 create policy "users: anyone can read" on public.users
@@ -272,6 +281,10 @@ create policy "invitations: inviter own" on public.invitations
   for all using (auth.uid() = inviter_user_id);
 create policy "invitations: claim" on public.invitations
   for update using (claimed_by_user_id is null);
+
+-- SAVED_VISITS: cada usuario gestiona los suyos
+create policy "saved_visits: own" on public.saved_visits
+  for all using (auth.uid() = user_id);
 
 -- ── STORAGE BUCKET para fotos ────────────────────────────────
 -- Ejecutar esto si no tienes ya el bucket creado en el dashboard

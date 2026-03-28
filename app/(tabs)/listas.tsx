@@ -138,7 +138,7 @@ export default function ListasScreen() {
 
   const savedItems = (savedData ?? []).map((item: any) => ({
     id: item.restaurant?.id ?? '',
-    name: item.restaurant ? getDisplayName(item.restaurant) : (item.restaurant?.name ?? ''),
+    name: item.restaurant ? getDisplayName(item.restaurant, 'ranking') : (item.restaurant?.name ?? ''),
     cuisine: (item.restaurant?.cuisine ?? null) as string | null,
     price: item.restaurant?.price_level as string | null,
     neighborhood: item.restaurant?.neighborhood ?? '',
@@ -168,7 +168,7 @@ export default function ListasScreen() {
     id: v.restaurant?.id ?? v.id,
     visitId: v.id,
     rank: v.rank_position ?? 0,
-    name: v.restaurant ? getDisplayName(v.restaurant) : (v.restaurant?.name ?? ''),
+    name: v.restaurant ? getDisplayName(v.restaurant, 'ranking') : (v.restaurant?.name ?? ''),
     cuisine: (v.restaurant?.cuisine ?? null) as string | null,
     price: v.restaurant?.price_level as string | null,
     neighborhood: v.restaurant?.neighborhood ?? '',

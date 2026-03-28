@@ -478,7 +478,7 @@ export default function AmigosScreen() {
                       });
                     } catch {
                       await Share.share({
-                        message: '¡Únete a fudi y comparte tus experiencias gastronómicas conmigo! 🍽️',
+                        message: 'Únete a fudi — el círculo gastronómico privado de tus amigos.',
                       });
                     } finally {
                       setInviting(false);

@@ -278,7 +278,7 @@ export default function RefineRankingScreen() {
             </View>
             <View style={styles.cardInfo}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.cardName}>{getDisplayName(higher.restaurant as any)}</Text>
+                <Text style={styles.cardName}>{getDisplayName(higher.restaurant as any, 'ranking')}</Text>
                 <Text style={styles.cardLocation}>{[(higher.restaurant as any).cuisine, (higher.restaurant as any).price_level ? '€'.repeat((higher.restaurant as any).price_level) : null].filter(Boolean).join(' · ')}</Text>
               </View>
               <View style={[styles.scoreRow, { backgroundColor: higherPal.badgeBg }]}>
@@ -307,7 +307,7 @@ export default function RefineRankingScreen() {
             </View>
             <View style={styles.cardInfo}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.cardName}>{getDisplayName(lower.restaurant as any)}</Text>
+                <Text style={styles.cardName}>{getDisplayName(lower.restaurant as any, 'ranking')}</Text>
                 <Text style={styles.cardLocation}>{[(lower.restaurant as any).cuisine, (lower.restaurant as any).price_level ? '€'.repeat((lower.restaurant as any).price_level) : null].filter(Boolean).join(' · ')}</Text>
               </View>
               <View style={[styles.scoreRow, { backgroundColor: lowerPal.badgeBg }]}>

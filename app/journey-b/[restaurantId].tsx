@@ -41,7 +41,7 @@ export default function JourneyBScreen() {
   );
   const { data: friendStats } = useFriendStats(relevantIds, currentUser?.id);
 
-  const restaurantName = chainData?.brandName ?? realRestaurant?.name ?? 'este restaurante';
+  const restaurantName = chainData?.chainName ?? realRestaurant?.name ?? 'este restaurante';
   const friendVisitCount = friendStats?.friendVisitCount ?? 0;
   const friendScore = friendStats?.friendScore;
 

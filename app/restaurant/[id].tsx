@@ -12,6 +12,7 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../../store';
 import {
@@ -51,6 +52,7 @@ export default function RestaurantScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [isFavorited, setIsFavorited] = useState(false);
   const currentUser = useAppStore((s) => s.currentUser);
+  const showToast   = useAppStore((s) => s.showToast);
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
 
   const { data: restaurant, isLoading: loadingRest, isError: restaurantError } = useRestaurant(id);
@@ -61,7 +63,7 @@ export default function RestaurantScreen() {
   const { data: recentVisits = [] } = useRecentVisits(relevantIds, currentUser?.id);
 
   const isChain = (relevantIds?.length ?? 0) > 1;
-  const displayName = chainData?.brandName ?? restaurant?.name ?? '—';
+  const displayName = chainData?.chainName ?? restaurant?.name ?? '—';
   const locationDisplay = isChain ? 'Múltiples ubicaciones' : (restaurant?.neighborhood ?? restaurant?.city ?? null);
   const cuisine = (restaurant as any)?.cuisine as string | null ?? null;
   const priceLevel = (restaurant as any)?.price_level as string | null ?? null;
@@ -151,7 +153,7 @@ export default function RestaurantScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <TouchableOpacity
             style={s.headerBtn}
-            onPress={() => Share.share({ title: displayName, message: `Echa un vistazo a ${displayName} en fudi 🍽️` })}
+            onPress={() => Share.share({ title: displayName, message: `Echa un vistazo a ${displayName} en fudi` })}
             activeOpacity={0.7}
           >
             <MaterialIcons name="ios-share" size={22} color="#032417" />
@@ -159,16 +161,20 @@ export default function RestaurantScreen() {
           <TouchableOpacity
             style={s.headerBtn}
             onPress={async () => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
               const next = !isFavorited;
               setIsFavorited(next);
               try {
-                if (id && currentUser?.id) await toggleBookmark({ restaurantId: id, save: next });
+                if (id && currentUser?.id) {
+                  await toggleBookmark({ restaurantId: id, save: next });
+                  if (next) showToast('Restaurante añadido a guardados');
+                }
               } catch { setIsFavorited(!next); }
             }}
             activeOpacity={0.7}
           >
             <MaterialIcons
-              name={isFavorited ? 'favorite' : 'favorite-border'}
+              name={isFavorited ? 'star' : 'star-border'}
               size={24}
               color={isFavorited ? '#c7ef48' : '#032417'}
             />
@@ -531,10 +537,8 @@ const s = StyleSheet.create({
     paddingBottom: 2,
   },
   statDivider: {
-    width: 1,
-    height: 52,
-    backgroundColor: '#e6e2db',
-    marginBottom: 14,
+    width: 0,
+    height: 0,
   },
   statValue: {
     fontFamily: 'NotoSerif-Bold',

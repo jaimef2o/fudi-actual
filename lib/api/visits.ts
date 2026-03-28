@@ -240,7 +240,11 @@ export async function recomputeRankPositions(userId: string): Promise<void> {
       );
     }
   });
-  await Promise.all(writes);
+  const results = await Promise.allSettled(writes);
+  const failures = results.filter(r => r.status === 'rejected');
+  if (failures.length > 0) {
+    console.error(`[fudi] ${failures.length} ranking updates failed`);
+  }
 }
 
 /**
@@ -369,13 +373,14 @@ export async function toggleReaction(
   emoji: 'hungry' | 'fire'
 ) {
   // Check if already reacted
-  const { data: existing } = await supabase
+  const { data: existing, error: selectError } = await supabase
     .from('reactions')
     .select('id')
     .eq('visit_id', visitId)
     .eq('user_id', userId)
     .eq('emoji', emoji)
     .maybeSingle();
+  if (selectError) throw selectError;
 
   if (existing) {
     const { error } = await supabase.from('reactions').delete().eq('id', existing.id);
@@ -407,14 +412,27 @@ async function getOrCreateWantList(userId: string): Promise<string> {
 
   if (existing?.id) return existing.id;
 
-  // Create the default want list
+  // Create the default want list — handle race condition where another
+  // concurrent request already created it between our SELECT and INSERT
   const { data: created, error } = await supabase
     .from('lists')
     .insert({ user_id: userId, name: 'Guardados', type: 'want' })
     .select('id')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    // If duplicate (unique constraint), fetch the existing one
+    if (error.code === '23505') {
+      const { data: retry } = await supabase
+        .from('lists')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('type', 'want')
+        .single();
+      if (retry?.id) return retry.id;
+    }
+    throw error;
+  }
   return created.id;
 }
 

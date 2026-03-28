@@ -1,8 +1,8 @@
 // @ts-nocheck
 import { supabase } from '../supabase';
 import type { RestaurantRow } from '../database.types';
-import { resolveChainId, extractBrandPrefixPublic } from '../chains';
-import { extractCuisineType, extractPriceLabel, checkIsChainViaGoogle } from './places';
+import { matchChain } from '../chains';
+import { extractCuisineType, extractPriceLabel } from './places';
 
 // ─── Restaurant ─────────────────────────────────────────────────────────────
 
@@ -42,47 +42,20 @@ export async function upsertRestaurant(restaurant: {
     .maybeSingle();
 
   if (existing) {
-    // Backfill brand_name if missing (Google-verified chain detection)
-    if (!(existing as any).brand_name) {
-      const detected = extractBrandPrefixPublic(existing.name);
-      if (detected?.hasLocationSuffix) {
-        const isChain = await checkIsChainViaGoogle(
-          detected.prefix,
-          existing.lat ?? null,
-          existing.lng ?? null
-        ).catch(() => false);
-        if (isChain) {
-          const brand_name = detected.prefix.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-          await supabase.from('restaurants').update({ brand_name } as any).eq('id', existing.id);
-          return { ...existing, brand_name } as RestaurantRow;
-        }
-      }
-    }
-    // Backfill chain_id if missing
-    if (!existing.chain_id) {
-      const chain_id = await resolveChainId(existing.name).catch(() => null);
-      if (chain_id) {
-        await supabase.from('restaurants').update({ chain_id }).eq('id', existing.id);
-        return { ...existing, chain_id } as RestaurantRow;
+    // Backfill chain_name if missing (CHAIN_CATALOG v2)
+    if (!existing.chain_name) {
+      const match = matchChain(existing.name);
+      if (match) {
+        await supabase.from('restaurants').update({ chain_name: match.chainId }).eq('id', existing.id);
+        return { ...existing, chain_name: match.chainId } as RestaurantRow;
       }
     }
     return existing as RestaurantRow;
   }
 
-  // 2. Detect brand_name via Google (chain verification), resolve chain_id, derive cuisine
-  const detected = extractBrandPrefixPublic(restaurant.name);
-  let brand_name: string | null = null;
-  if (detected?.hasLocationSuffix) {
-    const isChain = await checkIsChainViaGoogle(
-      detected.prefix,
-      restaurant.lat ?? null,
-      restaurant.lng ?? null
-    ).catch(() => false);
-    if (isChain) {
-      brand_name = detected.prefix.split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-    }
-  }
-  const chain_id = await resolveChainId(restaurant.name).catch(() => null);
+  // 2. Resolve chain_name from catalog, derive cuisine
+  const match = matchChain(restaurant.name);
+  const chain_name = match?.chainId ?? null;
   const cuisine = extractCuisineType(restaurant.google_types ?? []);
   const price_display = extractPriceLabel(restaurant.price_level ?? null);
 
@@ -90,7 +63,7 @@ export async function upsertRestaurant(restaurant: {
   const { google_types, price_level, ...rest } = restaurant;
   const { data, error } = await supabase
     .from('restaurants')
-    .insert({ ...rest, brand_name, chain_id, cuisine, price_level: price_display } as any)
+    .insert({ ...rest, chain_name, cuisine, price_level: price_display } as any)
     .select()
     .single();
 
@@ -275,6 +248,7 @@ export async function getRecentVisits(
     `)
     .in('restaurant_id', restaurantIds)
     .in('user_id', [...followingIds, currentUserId])
+    .in('visibility', ['friends', 'private'])
     .order('visited_at', { ascending: false })
     .limit(limit);
 

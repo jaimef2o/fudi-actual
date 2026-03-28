@@ -17,6 +17,7 @@ import { useState } from 'react';
 import { useAppStore } from '../../store';
 import { useProfile, useFriends, useRelationship, useFollowUser, useUnfollowUser, useFollowerCount, useFollowingCount } from '../../lib/hooks/useProfile';
 import { useUserRanking } from '../../lib/hooks/useVisit';
+import { useUserFeed } from '../../lib/hooks/useFeed';
 import { InfoTag } from '../../components/InfoTag';
 import { getDisplayName } from '../../lib/utils/restaurantName';
 import { supabase } from '../../lib/supabase';
@@ -172,7 +173,7 @@ const RANK_TEXT_COLORS = ['#546b00', '#032417', '#032417'];
 
 export default function ProfileScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
-  const [activeTab, setActiveTab] = useState<'favoritos' | 'actividad'>('favoritos');
+  const [activeTab, setActiveTab] = useState<'favoritos' | 'publicaciones'>('favoritos');
   const [isFriend, setIsFriend] = useState(false);
 
   const currentUser = useAppStore((s) => s.currentUser);
@@ -182,6 +183,7 @@ export default function ProfileScreen() {
   // Always fetch real data for any user
   const { data: realProfile, isLoading: profileLoading } = useProfile(profileUserId || undefined);
   const { data: realRanking = [], isLoading: rankingLoading } = useUserRanking(profileUserId || undefined);
+  const { data: userFeedData, isLoading: feedLoading } = useUserFeed(profileUserId || undefined);
   const { data: friendsList = [] } = useFriends(profileUserId || undefined);
   const { data: relationship } = useRelationship(currentUser?.id, isOwn ? undefined : profileUserId);
   const { mutateAsync: follow, isPending: following } = useFollowUser(currentUser?.id ?? '');
@@ -206,7 +208,7 @@ export default function ProfileScreen() {
 
   const topRestaurants = realRanking.slice(0, 3).map((v: any, i: number) => ({
     id: v.restaurant?.id ?? i,
-    name: v.restaurant ? getDisplayName(v.restaurant) : (v.restaurant?.name ?? '—'),
+    name: v.restaurant ? getDisplayName(v.restaurant, 'ranking') : (v.restaurant?.name ?? '—'),
     neighborhood: [v.restaurant?.neighborhood, v.restaurant?.city].filter(Boolean).join(' · '),
     cuisine: (v.restaurant?.cuisine as string | null) ?? null,
     price: (v.restaurant?.price_level as string | null) ?? null,
@@ -214,11 +216,19 @@ export default function ProfileScreen() {
     image: v.restaurant?.cover_image_url ?? null,
   }));
 
-  // Activity: photos from all visits — preserve visit_id for correct navigation
-  const activityPhotos = realRanking
-    .flatMap((v: any) => (v.photos ?? []).map((p: any) => ({ ...p, visit_id: v.id })))
-    .filter((p: any) => p?.photo_url)
-    .slice(0, 12);
+  // Publicaciones: all visits from the user's feed, each with cover image
+  const allUserPosts = (userFeedData?.pages ?? []).flatMap((p) => p);
+  const publicaciones = allUserPosts.map((post: any) => {
+    const userPhoto = (post.photos ?? []).find((p: any) => p?.photo_url)?.photo_url ?? null;
+    // Fallback to restaurant cover image from Google Places
+    const image = userPhoto ?? post.restaurant?.cover_image_url ?? null;
+    return {
+      id: post.id,
+      image,
+      restaurantName: post.restaurant?.name ?? '',
+      score: post.rank_score ?? null,
+    };
+  });
 
 
   async function handleLogout() {
@@ -281,7 +291,7 @@ export default function ProfileScreen() {
             } else {
               Share.share({
                 title: profileName,
-                message: `Mira el perfil de ${profileName} en fudi 🍽️`,
+                message: `Mira el perfil de ${profileName} en fudi`,
               });
             }
           }}
@@ -401,28 +411,28 @@ export default function ProfileScreen() {
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.tab, activeTab === 'actividad' && styles.tabActive]}
-              onPress={() => setActiveTab('actividad')}
+              style={[styles.tab, activeTab === 'publicaciones' && styles.tabActive]}
+              onPress={() => setActiveTab('publicaciones')}
             >
               <MaterialIcons
                 name="grid-on"
                 size={16}
-                color={activeTab === 'actividad' ? '#032417' : '#727973'}
+                color={activeTab === 'publicaciones' ? '#032417' : '#727973'}
               />
-              <Text style={[styles.tabText, activeTab === 'actividad' && styles.tabTextActive]}>
-                Actividad
+              <Text style={[styles.tabText, activeTab === 'publicaciones' && styles.tabTextActive]}>
+                Publicaciones
               </Text>
             </TouchableOpacity>
           </View>
         </View>
 
         {/* Tab content */}
-        {profileLoading || rankingLoading ? (
+        {profileLoading || rankingLoading || feedLoading ? (
           <ActivityIndicator size="large" color="#032417" style={{ marginTop: 40 }} />
         ) : activeTab === 'favoritos' ? (
           <FavoritosTab restaurants={topRestaurants} showRankingLink={isOwn} />
         ) : (
-          <ActividadTab posts={activityPhotos.map((p: any) => ({ id: p.visit_id, image: p.photo_url }))} />
+          <PublicacionesTab posts={publicaciones} />
         )}
 
         <View style={{ height: 100 }} />
@@ -494,17 +504,23 @@ function FavoritosTab({
   );
 }
 
-function ActividadTab({ posts }: { posts: { id: string; image: string }[] }) {
+function PublicacionesTab({ posts }: { posts: { id: string; image: string | null; restaurantName: string; score: number | null }[] }) {
   if (posts.length === 0) {
     return (
       <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 10 }}>
-        <MaterialIcons name="photo-library" size={40} color="#e6e2db" />
+        <MaterialIcons name="grid-on" size={40} color="#e6e2db" />
         <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 16, color: '#032417', textAlign: 'center' }}>
-          Sin fotos todavía
+          Sin publicaciones todavía
         </Text>
         <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973', textAlign: 'center', lineHeight: 19 }}>
-          Las fotos de tus visitas aparecerán aquí cuando registres una visita con imágenes.
+          Tus visitas aparecerán aquí cuando registres una.
         </Text>
+        <TouchableOpacity
+          style={{ marginTop: 8, backgroundColor: '#032417', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}
+          onPress={() => router.push('/registrar-visita')}
+        >
+          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>Registrar visita</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -522,7 +538,22 @@ function ActividadTab({ posts }: { posts: { id: string; image: string }[] }) {
           activeOpacity={0.9}
           onPress={() => router.push(`/visit/${post.id}`)}
         >
-          <Image source={{ uri: post.image }} style={styles.gridImage} resizeMode="cover" />
+          {post.image ? (
+            <Image source={{ uri: post.image }} style={styles.gridImage} resizeMode="cover" />
+          ) : (
+            // No-photo fallback — editorial cream card
+            <View style={styles.gridImagePlaceholder}>
+              <MaterialIcons name="restaurant" size={16} color="#c1c8c2" />
+              <Text style={styles.gridPlaceholderName} numberOfLines={3}>
+                {post.restaurantName}
+              </Text>
+              {post.score != null && (
+                <View style={styles.gridPlaceholderBadge}>
+                  <Text style={styles.gridPlaceholderScore}>{post.score.toFixed(1)}</Text>
+                </View>
+              )}
+            </View>
+          )}
         </TouchableOpacity>
       ))}
     </View>
@@ -893,4 +924,36 @@ const styles = StyleSheet.create({
     height: GRID_CELL,
   },
   gridImage: { width: '100%', height: '100%' },
+
+  // No-photo placeholder — editorial card style
+  gridImagePlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#f7f3ec',
+    borderWidth: 1,
+    borderColor: 'rgba(193,200,194,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+    gap: 5,
+  },
+  gridPlaceholderName: {
+    fontFamily: 'NotoSerif-BoldItalic',
+    fontSize: 10,
+    color: '#032417',
+    textAlign: 'center',
+    lineHeight: 14,
+  },
+  gridPlaceholderBadge: {
+    backgroundColor: '#c7ef48',
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 2,
+  },
+  gridPlaceholderScore: {
+    fontFamily: 'NotoSerif-Bold',
+    fontSize: 10,
+    color: '#546b00',
+  },
 });

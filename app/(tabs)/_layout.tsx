@@ -1,35 +1,34 @@
 import { Tabs } from 'expo-router';
 import { View, Text, TouchableOpacity, Platform, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 
-// Icons matched to prototype Material Symbols
 const TAB_CONFIG = {
-  feed: { icon: 'home' as const, label: 'Feed' },
-  listas: { icon: 'receipt' as const, label: 'Listas' },
-  nuevo: { icon: 'add-circle' as const, label: '+' },
-  descubrir: { icon: 'explore' as const, label: 'Descubrir' },
-  amigos: { icon: 'group' as const, label: 'Amigos' },
+  feed:      { icon: 'home'       as const, label: 'Feed' },
+  listas:    { icon: 'receipt'    as const, label: 'Listas' },
+  nuevo:     { icon: 'add-circle' as const, label: '+' },
+  descubrir: { icon: 'explore'    as const, label: 'Descubrir' },
+  amigos:    { icon: 'group'      as const, label: 'Amigos' },
 } as const;
 
 type TabKey = keyof typeof TAB_CONFIG;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function CustomTabBar({ state, descriptors, navigation }: any) {
+function CustomTabBar({ state, navigation }: any) {
   return (
-    <View style={styles.tabBar}>
+    <View style={s.bar}>
       {state.routes.map((route: any, index: number) => {
-        const isFocused = state.index === index;
-        const tabKey = route.name as TabKey;
-        const tab = TAB_CONFIG[tabKey];
+        const focused  = state.index === index;
+        const tab      = TAB_CONFIG[route.name as TabKey];
         const isCenter = route.name === 'nuevo';
 
         const onPress = () => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
           const event = navigation.emit({
             type: 'tabPress',
             target: route.key,
             canPreventDefault: true,
           });
-          if (!isFocused && !event.defaultPrevented) {
+          if (!focused && !event.defaultPrevented) {
             navigation.navigate(route.name);
           }
         };
@@ -39,10 +38,10 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
             <TouchableOpacity
               key={route.key}
               onPress={onPress}
-              style={styles.centerTab}
+              style={s.center}
               activeOpacity={0.7}
             >
-              <MaterialIcons name="add-circle" size={40} color="#032417" />
+              <MaterialIcons name="add-circle" size={42} color="#032417" />
             </TouchableOpacity>
           );
         }
@@ -52,20 +51,16 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
             key={route.key}
             onPress={onPress}
             activeOpacity={0.7}
-            style={[styles.tabItem, isFocused && styles.tabItemActive]}
+            style={[s.tab, focused && s.tabActive]}
           >
             <MaterialIcons
               name={tab.icon}
-              size={isFocused ? 22 : 24}
-              color={isFocused ? '#032417' : '#9fa69f'}
+              size={focused ? 21 : 22}
+              color={focused ? '#032417' : '#9fa69f'}
             />
-            {isFocused ? (
-              <Text style={[styles.tabLabel, styles.tabLabelActive]}>
-                {tab.label}
-              </Text>
-            ) : (
-              <View style={styles.tabDot} />
-            )}
+            <Text style={[s.label, focused && s.labelActive]}>
+              {tab.label}
+            </Text>
           </TouchableOpacity>
         );
       })}
@@ -73,68 +68,58 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
-  tabBar: {
+const s = StyleSheet.create({
+  bar: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: Platform.OS === 'ios' ? 88 : 72,
-    backgroundColor: 'rgba(255,255,255,0.80)',
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
+    bottom: 0, left: 0, right: 0,
+    height: Platform.OS === 'ios' ? 86 : 68,
+    backgroundColor: 'rgba(253,249,242,0.92)',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.05,
     shadowRadius: 16,
     elevation: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    paddingBottom: Platform.OS === 'ios' ? 24 : 8,
-    paddingTop: 8,
-    paddingHorizontal: 16,
-  },
-  tabItem: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingBottom: Platform.OS === 'ios' ? 22 : 6,
+    paddingTop: 6,
     paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderRadius: 999,
-    gap: 2,
   },
-  tabItemActive: {
-    backgroundColor: '#c7ef48',
-    transform: [{ translateY: -8 }],
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  centerTab: {
+  tab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,
+    borderRadius: 999,
+    gap: 3,
   },
-  tabLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#727973',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  tabActive: {
+    backgroundColor: '#c7ef48',
+    transform: [{ translateY: -6 }],
+    shadowColor: '#546b00',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
+  label: {
+    fontFamily: 'Manrope-Medium',
+    fontSize: 9,
+    color: '#a0a6a1',
+    letterSpacing: 0.3,
+  },
+  labelActive: {
     fontFamily: 'Manrope-Bold',
-  },
-  tabLabelActive: {
     color: '#032417',
-  },
-  tabDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: 'rgba(114,121,115,0.25)',
   },
 });
 

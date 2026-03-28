@@ -3,6 +3,7 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   TextInput,
   StyleSheet,
   Platform,
@@ -117,10 +118,9 @@ export default function SelectRestaurantScreen() {
         {/* Results */}
         <View style={styles.list}>
           {results.map((place) => (
-            <TouchableOpacity
+            <Pressable
               key={place.place_id}
-              style={styles.card}
-              activeOpacity={0.8}
+              style={({ pressed }) => [styles.card, pressed && { opacity: 0.8 }]}
               disabled={selecting !== null}
               onPress={() => handleSelect(place)}
             >
@@ -140,7 +140,7 @@ export default function SelectRestaurantScreen() {
               ) : (
                 <MaterialIcons name="chevron-right" size={20} color="#c1c8c2" />
               )}
-            </TouchableOpacity>
+            </Pressable>
           ))}
 
           {!loading && search.trim().length >= 2 && results.length === 0 && (

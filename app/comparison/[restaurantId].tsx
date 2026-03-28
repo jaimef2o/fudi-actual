@@ -204,7 +204,7 @@ export default function ComparisonScreen() {
             <Text style={styles.successRestaurant}>{newRestaurantName}</Text>
             <View style={styles.successBracketPill}>
               <Text style={styles.successBracketText}>
-                {sentiment === 'loved' ? '❤️ Te encantó' : sentiment === 'fine' ? '👌 Estuvo bien' : '😕 No te convenció'}
+                {sentiment === 'loved' ? 'Te encantó' : sentiment === 'fine' ? 'Estuvo bien' : 'No te convenció'}
                 {'  '}·{'  '}
                 Rango {bracket.min.toFixed(1)}–{bracket.max.toFixed(1)}
               </Text>
@@ -318,7 +318,7 @@ export default function ComparisonScreen() {
               </View>
               <View style={styles.cardInfo}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.cardName}>{getDisplayName(compareWith.restaurant as any)}</Text>
+                  <Text style={styles.cardName}>{getDisplayName(compareWith.restaurant as any, 'ranking')}</Text>
                   <Text style={styles.cardLocation}>{[(compareWith.restaurant as any).cuisine, (compareWith.restaurant as any).price_level ? '€'.repeat((compareWith.restaurant as any).price_level) : null].filter(Boolean).join(' · ')}</Text>
                 </View>
                 {compareWith.rank_score != null && (() => {
@@ -359,7 +359,11 @@ export default function ComparisonScreen() {
         {/* Bracket info pill */}
         <View style={styles.bracketInfo}>
           <Text style={styles.bracketInfoText}>
-            {sentiment === 'loved' ? '❤️' : sentiment === 'fine' ? '👌' : '😕'}
+            <MaterialIcons
+              name={sentiment === 'loved' ? 'favorite' : sentiment === 'fine' ? 'thumb-up' : 'thumb-down'}
+              size={14}
+              color={sentiment === 'loved' ? '#ba1a1a' : sentiment === 'fine' ? '#424844' : '#727973'}
+            />
             {'  '}
             {sentiment === 'loved' ? 'Te encantó' : sentiment === 'fine' ? 'Estuvo bien' : 'No te convenció'}
             {'  ·  '}

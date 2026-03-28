@@ -24,6 +24,7 @@ import { useAppStore } from '../../store';
 import { scorePalette } from '../../lib/sentimentColors';
 import { InfoTag } from '../../components/InfoTag';
 import { getDisplayName } from '../../lib/utils/restaurantName';
+import * as Haptics from 'expo-haptics';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CAROUSEL_HEIGHT = SCREEN_HEIGHT * 0.6;
@@ -56,6 +57,7 @@ export default function VisitScreen() {
   const { data: visit, isLoading } = useVisit(id);
   const { data: visitDishes = [] } = useVisitDishes(id);
   const currentUser = useAppStore((s) => s.currentUser);
+  const showToast   = useAppStore((s) => s.showToast);
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
   const { mutateAsync: toggleSavePost } = useSavePost(currentUser?.id);
   const { mutateAsync: deleteVisit, isPending: isDeleting } = useDeleteVisit();
@@ -88,24 +90,28 @@ export default function VisitScreen() {
   async function handleSaveRestaurant() {
     const restaurantId = (visit as any)?.restaurant?.id;
     if (!currentUser?.id || !restaurantId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const next = !restaurantSaved;
     setRestaurantSaved(next);
     try {
       await toggleBookmark({ restaurantId, save: next });
+      if (next) showToast('Restaurante añadido a guardados');
     } catch { setRestaurantSaved(!next); }
   }
 
   async function handleSavePost() {
     if (!currentUser?.id || !id) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const next = !postSaved;
     setPostSaved(next);
     try {
       await toggleSavePost({ visitId: id, save: next });
+      if (next) showToast('Publicación guardada');
     } catch { setPostSaved(!next); }
   }
 
   const visitRestaurant = (visit as any)?.restaurant;
-  const resolvedRestaurantName = visitRestaurant ? getDisplayName(visitRestaurant) : 'un restaurante';
+  const resolvedRestaurantName = visitRestaurant ? getDisplayName(visitRestaurant, 'detail') : 'un restaurante';
 
   function handleOpenEdit() {
     setEditNote((visit as any)?.note ?? '');
@@ -411,19 +417,19 @@ export default function VisitScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* Save restaurant — heart */}
+          {/* Save restaurant — star */}
           <TouchableOpacity
-            style={[styles.actionBtn, restaurantSaved && styles.actionBtnFav]}
+            style={[styles.actionBtn, restaurantSaved && styles.actionBtnStar]}
             activeOpacity={0.8}
             onPress={handleSaveRestaurant}
           >
             <MaterialIcons
-              name={restaurantSaved ? 'favorite' : 'favorite-border'}
+              name={restaurantSaved ? 'star' : 'star-border'}
               size={18}
-              color={restaurantSaved ? '#ba1a1a' : '#032417'}
+              color={restaurantSaved ? '#546b00' : '#032417'}
             />
-            <Text style={[styles.actionBtnText, restaurantSaved && { color: '#ba1a1a' }]}>
-              {restaurantSaved ? 'Guardado' : 'Restaurante'}
+            <Text style={[styles.actionBtnText, restaurantSaved && styles.actionBtnTextStar]}>
+              {restaurantSaved ? 'En lista' : 'Guardar'}
             </Text>
           </TouchableOpacity>
 
@@ -848,6 +854,12 @@ const styles = StyleSheet.create({
   },
   actionBtnFav: {
     backgroundColor: '#fff0f0',
+  },
+  actionBtnStar: {
+    backgroundColor: '#c7ef48',
+  },
+  actionBtnTextStar: {
+    color: '#546b00',
   },
   actionBtnEdit: {
     flexDirection: 'row',

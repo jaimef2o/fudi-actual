@@ -84,50 +84,65 @@ export type FollowRequest = {
   requester: UserRow;
 };
 
-// Mutual friends
+// Mutual friends — bidirectional check (avoids needing type='mutual' which requires cross-user RLS)
 export async function getFriends(userId: string): Promise<FriendWithProfile[]> {
-  const { data, error } = await supabase
+  // Everyone I follow
+  const { data: iFollow, error: e1 } = await supabase
     .from('relationships')
-    .select(`
-      *,
-      friend:users!target_id (*)
-    `)
-    .eq('user_id', userId)
-    .eq('type', 'mutual');
+    .select('target_id, friend:users!target_id(*)')
+    .eq('user_id', userId);
+  if (e1) throw e1;
 
-  if (error) throw error;
-  return (data ?? []) as FriendWithProfile[];
+  // Everyone who follows me
+  const { data: followMe, error: e2 } = await supabase
+    .from('relationships')
+    .select('user_id')
+    .eq('target_id', userId);
+  if (e2) throw e2;
+
+  const followMeSet = new Set((followMe ?? []).map((r: any) => r.user_id));
+  // Mutual = I follow them AND they follow me
+  return (iFollow ?? []).filter((r: any) => followMeSet.has(r.target_id)) as FriendWithProfile[];
 }
 
-// People you follow but who haven't followed back yet (type='following', outgoing)
+// People I follow who haven't followed back yet (outgoing one-way)
 export async function getFollowing(userId: string): Promise<FriendWithProfile[]> {
-  const { data, error } = await supabase
+  const { data: iFollow, error: e1 } = await supabase
     .from('relationships')
-    .select(`
-      *,
-      friend:users!target_id (*)
-    `)
-    .eq('user_id', userId)
-    .eq('type', 'following');
+    .select('target_id, friend:users!target_id(*)')
+    .eq('user_id', userId);
+  if (e1) throw e1;
 
-  if (error) throw error;
-  return (data ?? []) as FriendWithProfile[];
+  const { data: followMe, error: e2 } = await supabase
+    .from('relationships')
+    .select('user_id')
+    .eq('target_id', userId);
+  if (e2) throw e2;
+
+  const followMeSet = new Set((followMe ?? []).map((r: any) => r.user_id));
+  // One-way: I follow them but they don't follow me back
+  return (iFollow ?? []).filter((r: any) => !followMeSet.has(r.target_id)) as FriendWithProfile[];
 }
 
-// People who follow you but you haven't followed back (pending requests)
+// People who follow me but I haven't followed back (incoming requests)
 export async function getFollowRequests(userId: string): Promise<FollowRequest[]> {
-  const { data, error } = await supabase
+  // Everyone who follows me
+  const { data: followMe, error: e1 } = await supabase
     .from('relationships')
-    .select(`
-      user_id,
-      created_at,
-      requester:users!user_id (*)
-    `)
-    .eq('target_id', userId)
-    .eq('type', 'following');
+    .select('user_id, created_at, requester:users!user_id(*)')
+    .eq('target_id', userId);
+  if (e1) throw e1;
 
-  if (error) throw error;
-  return (data ?? []) as unknown as FollowRequest[];
+  // Everyone I follow
+  const { data: iFollow, error: e2 } = await supabase
+    .from('relationships')
+    .select('target_id')
+    .eq('user_id', userId);
+  if (e2) throw e2;
+
+  const iFollowSet = new Set((iFollow ?? []).map((r: any) => r.target_id));
+  // Requests = they follow me but I haven't followed back
+  return (followMe ?? []).filter((r: any) => !iFollowSet.has(r.user_id)) as unknown as FollowRequest[];
 }
 
 export async function getRelationship(
@@ -144,68 +159,25 @@ export async function getRelationship(
   return data;
 }
 
-// Follow with mutual upgrade:
-// • If target already follows userId → upgrade both rows to 'mutual'
-// • Otherwise → insert 'following'
+// Follow: only manage own row — mutuality is detected bidirectionally at query time
 export async function followUser(userId: string, targetId: string) {
-  // Check if the target already follows us
-  const { data: reverseRow } = await supabase
+  const { error } = await supabase
     .from('relationships')
-    .select('type')
-    .eq('user_id', targetId)
-    .eq('target_id', userId)
-    .maybeSingle();
-
-  if (reverseRow) {
-    // They follow us → make it mutual in both directions
-    const { error: e1 } = await supabase
-      .from('relationships')
-      .update({ type: 'mutual' })
-      .eq('user_id', targetId)
-      .eq('target_id', userId);
-    if (e1) throw e1;
-
-    const { error: e2 } = await supabase
-      .from('relationships')
-      .upsert({ user_id: userId, target_id: targetId, type: 'mutual' });
-    if (e2) throw e2;
-  } else {
-    // Simple one-way follow
-    const { error } = await supabase
-      .from('relationships')
-      .upsert({ user_id: userId, target_id: targetId, type: 'following' });
-    if (error) throw error;
-  }
+    .upsert(
+      { user_id: userId, target_id: targetId, type: 'following' },
+      { onConflict: 'user_id,target_id' }
+    );
+  if (error) throw error;
 }
 
-// Unfollow with mutual downgrade:
-// • If it was mutual → downgrade their row back to 'following'
-// • Then delete our row
+// Unfollow: just delete own row — no cross-user update needed
 export async function unfollowUser(userId: string, targetId: string) {
-  // Check the reverse row before deleting
-  const { data: reverseRow } = await supabase
-    .from('relationships')
-    .select('type')
-    .eq('user_id', targetId)
-    .eq('target_id', userId)
-    .maybeSingle();
-
-  // Delete our outgoing follow
   const { error } = await supabase
     .from('relationships')
     .delete()
     .eq('user_id', userId)
     .eq('target_id', targetId);
   if (error) throw error;
-
-  // If it was mutual, downgrade their row to 'following' (they still follow us)
-  if (reverseRow?.type === 'mutual') {
-    await supabase
-      .from('relationships')
-      .update({ type: 'following' })
-      .eq('user_id', targetId)
-      .eq('target_id', userId);
-  }
 }
 
 // ─── Invitations ────────────────────────────────────────────────────────────

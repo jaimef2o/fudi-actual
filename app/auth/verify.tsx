@@ -11,54 +11,109 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState, useRef } from 'react';
+import { MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { claimInvitation } from '../../lib/api/users';
 import { useAppStore } from '../../store';
 
-export default function VerifyScreen() {
-  const { email } = useLocalSearchParams<{ email: string }>();
-  const [otp, setOtp] = useState('');
-  const [loading, setLoading] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+const CODE_LENGTH = 6;
 
-  const pendingInviteToken = useAppStore((s) => s.pendingInviteToken);
+export default function VerifyScreen() {
+  const { email, type = 'signup' } = useLocalSearchParams<{ email: string; type?: string }>();
+  const [code, setCode]   = useState<string[]>(Array(CODE_LENGTH).fill(''));
+  const [loading, setLoading] = useState(false);
+  const inputRefs = useRef<Array<TextInput | null>>([]);
+
+  const pendingInviteToken   = useAppStore((s) => s.pendingInviteToken);
   const setPendingInviteToken = useAppStore((s) => s.setPendingInviteToken);
 
-  async function handleVerify(overrideCode?: string) {
-    const code = overrideCode ?? otp;
-    if (code.length < 8) return;
+  const currentCode = code.join('');
+  const isFull = currentCode.length === CODE_LENGTH && code.every(Boolean);
+
+  function handleChange(index: number, value: string) {
+    const cleaned = value.replace(/\D/g, '');
+
+    // Paste handling — fill multiple boxes
+    if (cleaned.length > 1) {
+      const newCode = [...code];
+      const chars = cleaned.slice(0, CODE_LENGTH).split('');
+      for (let i = 0; i < chars.length; i++) {
+        newCode[i] = chars[i];
+      }
+      setCode(newCode);
+      const lastFilled = Math.min(chars.length - 1, CODE_LENGTH - 1);
+      inputRefs.current[lastFilled]?.focus();
+      if (chars.length === CODE_LENGTH) {
+        doVerify(newCode.join(''));
+      }
+      return;
+    }
+
+    const newCode = [...code];
+    newCode[index] = cleaned;
+    setCode(newCode);
+
+    if (cleaned && index < CODE_LENGTH - 1) {
+      inputRefs.current[index + 1]?.focus();
+    }
+
+    if (newCode.filter(Boolean).length === CODE_LENGTH) {
+      doVerify(newCode.join(''));
+    }
+  }
+
+  function handleKeyPress(index: number, key: string) {
+    if (key === 'Backspace' && !code[index] && index > 0) {
+      const newCode = [...code];
+      newCode[index - 1] = '';
+      setCode(newCode);
+      inputRefs.current[index - 1]?.focus();
+    }
+  }
+
+  async function doVerify(codeStr: string) {
+    if (codeStr.length !== CODE_LENGTH || loading) return;
     setLoading(true);
+
+    const otpType = type === 'recovery' ? 'recovery' : type === 'email' ? 'email' : 'signup';
+
     const { data, error } = await supabase.auth.verifyOtp({
       email: email!,
-      token: code,
-      type: 'email',
+      token: codeStr,
+      type: otpType as 'signup' | 'email' | 'recovery',
     });
     setLoading(false);
 
     if (error) {
-      const expired = error.message?.toLowerCase().includes('expired') || error.message?.toLowerCase().includes('otp');
+      const expired =
+        error.message?.toLowerCase().includes('expired') ||
+        error.message?.toLowerCase().includes('otp');
       Alert.alert(
         expired ? 'Código caducado' : 'Código incorrecto',
         expired
-          ? 'El código ha caducado (válido 10 min). Pulsa "Reenviar email" para recibir uno nuevo.'
-          : 'El código introducido no es válido. Compruébalo o solicita uno nuevo.',
+          ? 'El código ha caducado (válido 10 min). Solicita uno nuevo.'
+          : 'El código no es válido. Compruébalo e inténtalo de nuevo.',
       );
-      setOtp('');
+      setCode(Array(CODE_LENGTH).fill(''));
+      inputRefs.current[0]?.focus();
       return;
     }
 
-    if (data.user) {
-      // Claim pending invite token if one exists (user came via invite link)
+    // Supabase can return data.user = null even on success — fall back to session.user
+    const resolvedUser = data.user ?? data.session?.user ?? null;
+
+    if (resolvedUser) {
+      // Claim pending invite if one exists
       if (pendingInviteToken) {
-        await claimInvitation(pendingInviteToken, data.user.id);
+        await claimInvitation(pendingInviteToken, resolvedUser.id);
         setPendingInviteToken(null);
       }
 
-      // Check if user has a name + handle set
+      // Check if user has completed their profile
       const { data: profileData } = await supabase
         .from('users')
         .select('name, handle')
-        .eq('id', data.user.id)
+        .eq('id', resolvedUser.id)
         .single();
 
       const profile = profileData as { name: string | null; handle: string | null } | null;
@@ -67,141 +122,199 @@ export default function VerifyScreen() {
       } else {
         router.replace('/(tabs)/feed');
       }
+    } else {
+      // Session established but no user data available yet —
+      // the onAuthStateChange listener in _layout.tsx will handle routing.
+      // As a safety net, navigate to name setup which is always safe for new users.
+      router.replace('/auth/name');
     }
   }
 
   async function handleResend() {
     const { error } = await supabase.auth.signInWithOtp({
       email: email!,
-      options: { shouldCreateUser: true },
+      options: { shouldCreateUser: false },
     });
     if (error) {
       Alert.alert('Error', error.message);
     } else {
-      Alert.alert('Código reenviado', 'Hemos enviado un nuevo código a tu email.');
+      Alert.alert('Código reenviado', 'Revisa tu bandeja de entrada.');
     }
   }
 
   return (
     <KeyboardAvoidingView
-      style={styles.root}
+      style={s.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.inner}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backText}>← Volver</Text>
+      <View style={s.inner}>
+        {/* Back */}
+        <TouchableOpacity style={s.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
+          <MaterialIcons name="arrow-back" size={22} color="#032417" />
         </TouchableOpacity>
 
-        <View style={styles.content}>
-          <Text style={styles.title}>Verifica tu email</Text>
-          <Text style={styles.subtitle}>
-            Hemos enviado un código de verificación a{'\n'}
-            <Text style={styles.phoneHighlight}>{email}</Text>
-          </Text>
+        <View style={s.content}>
+          {/* Header */}
+          <View style={s.header}>
+            <View style={s.iconCircle}>
+              <MaterialIcons name="mark-email-unread" size={28} color="#032417" />
+            </View>
+            <Text style={s.title}>Revisa tu email</Text>
+            <Text style={s.subtitle}>
+              Hemos enviado un código de 6 dígitos a{'\n'}
+              <Text style={s.emailBold}>{email}</Text>
+            </Text>
+          </View>
 
-          <Text style={styles.label}>CÓDIGO DE VERIFICACIÓN</Text>
-          <TextInput
-            ref={inputRef}
-            style={styles.otpInput}
-            placeholder="• • • • • • • •"
-            placeholderTextColor="#c1c8c2"
-            keyboardType="number-pad"
-            maxLength={8}
-            value={otp}
-            onChangeText={(v) => {
-              setOtp(v);
-              if (v.length === 8) handleVerify(v);
-            }}
-            autoFocus
-            returnKeyType="done"
-            autoComplete="one-time-code"
-            textContentType="oneTimeCode"
-          />
+          {/* 6-box code input */}
+          <View style={s.codeRow}>
+            {Array.from({ length: CODE_LENGTH }).map((_, i) => (
+              <TextInput
+                key={i}
+                ref={(ref) => { inputRefs.current[i] = ref; }}
+                style={[
+                  s.codeBox,
+                  code[i] ? s.codeBoxFilled : null,
+                  loading ? s.codeBoxLoading : null,
+                ]}
+                value={code[i]}
+                onChangeText={(val) => handleChange(i, val)}
+                onKeyPress={({ nativeEvent }) => handleKeyPress(i, nativeEvent.key)}
+                keyboardType="number-pad"
+                maxLength={CODE_LENGTH} // allow paste from any box
+                textAlign="center"
+                autoFocus={i === 0}
+                editable={!loading}
+                autoComplete={i === 0 ? 'one-time-code' : undefined}
+                textContentType={i === 0 ? 'oneTimeCode' : undefined}
+                selectTextOnFocus
+              />
+            ))}
+          </View>
 
+          {loading && (
+            <View style={s.loadingRow}>
+              <ActivityIndicator size="small" color="#727973" />
+              <Text style={s.loadingText}>Verificando...</Text>
+            </View>
+          )}
+
+          {/* Primary CTA */}
           <TouchableOpacity
-            style={[styles.btn, (otp.length < 8 || loading) && styles.btnDisabled]}
+            style={[s.btn, (!isFull || loading) && s.btnDisabled]}
             activeOpacity={0.85}
-            onPress={() => handleVerify()}
-            disabled={otp.length < 8 || loading}
+            onPress={() => doVerify(currentCode)}
+            disabled={!isFull || loading}
           >
-            {loading ? (
-              <ActivityIndicator color="#032417" />
-            ) : otp.length < 8 ? (
-              <Text style={[styles.btnText, { color: '#a8a8a8' }]}>
-                {otp.length === 0 ? 'Introduce el código' : `Faltan ${8 - otp.length} dígitos`}
-              </Text>
-            ) : (
-              <Text style={styles.btnText}>Verificar →</Text>
-            )}
+            <Text style={s.btnText}>Verificar</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={handleResend} style={styles.resendBtn}>
-            <Text style={styles.resendText}>¿No recibiste el código? Reenviar email</Text>
+          {/* Resend */}
+          <TouchableOpacity onPress={handleResend} style={s.resendBtn} activeOpacity={0.7}>
+            <Text style={s.resendText}>¿No recibiste el código?</Text>
+            <Text style={s.resendLink}>Reenviar email</Text>
           </TouchableOpacity>
+
+          {/* Hint */}
+          <Text style={s.hint}>
+            El código es válido durante 10 minutos. Revisa también la carpeta de spam.
+          </Text>
         </View>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#fdf9f2',
-  },
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#fdf9f2' },
   inner: {
     flex: 1,
     paddingHorizontal: 28,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingTop: Platform.OS === 'ios' ? 64 : 48,
+    paddingBottom: 48,
   },
-  backBtn: { marginBottom: 40 },
-  backText: {
-    fontFamily: 'Manrope-Medium',
-    fontSize: 15,
-    color: '#727973',
+
+  backBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -8,
+    marginBottom: 24,
   },
-  content: { gap: 16 },
+
+  content: { gap: 28 },
+
+  header: { gap: 12 },
+  iconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: '#f1ede6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: {
     fontFamily: 'NotoSerif-Bold',
-    fontSize: 32,
+    fontSize: 30,
     color: '#032417',
-    marginBottom: 4,
+    marginTop: 4,
   },
   subtitle: {
     fontFamily: 'Manrope-Regular',
     fontSize: 15,
     color: '#727973',
     lineHeight: 22,
-    marginBottom: 8,
   },
-  phoneHighlight: {
+  emailBold: {
     fontFamily: 'Manrope-Bold',
-    color: '#032417',
-  },
-  label: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 10,
-    color: '#727973',
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-  },
-  otpInput: {
-    backgroundColor: '#f7f3ec',
-    borderRadius: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-    fontFamily: 'Manrope-Regular',
-    fontSize: 28,
     color: '#1c1c18',
-    letterSpacing: 12,
-    textAlign: 'center',
   },
+
+  codeRow: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+  },
+  codeBox: {
+    flex: 1,
+    aspectRatio: 0.85,
+    maxWidth: 52,
+    backgroundColor: '#f7f3ec',
+    borderRadius: 14,
+    fontFamily: 'Manrope-Bold',
+    fontSize: 22,
+    color: '#032417',
+    textAlign: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  codeBoxFilled: {
+    backgroundColor: '#fff',
+    borderColor: '#c7ef48',
+  },
+  codeBoxLoading: {
+    opacity: 0.6,
+  },
+
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: -12,
+  },
+  loadingText: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 13,
+    color: '#727973',
+  },
+
   btn: {
     backgroundColor: '#c7ef48',
-    borderRadius: 16,
+    borderRadius: 14,
     paddingVertical: 18,
     alignItems: 'center',
-    marginTop: 4,
   },
   btnDisabled: { backgroundColor: '#e6e2db' },
   btnText: {
@@ -209,11 +322,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#032417',
   },
-  resendBtn: { alignItems: 'center', paddingVertical: 8 },
+
+  resendBtn: {
+    alignItems: 'center',
+    gap: 2,
+    paddingVertical: 4,
+  },
   resendText: {
     fontFamily: 'Manrope-Regular',
     fontSize: 13,
     color: '#727973',
+  },
+  resendLink: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 13,
+    color: '#032417',
     textDecorationLine: 'underline',
+  },
+
+  hint: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 12,
+    color: '#c1c8c2',
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });

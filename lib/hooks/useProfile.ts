@@ -30,8 +30,8 @@ export function useFriends(userId: string | undefined) {
     queryKey: ['friends', userId],
     queryFn: () => getFriends(userId!),
     enabled: !!userId,
-    staleTime: 30_000,       // 30s — poll for accepted requests
-    refetchInterval: 20_000,
+    staleTime: 2 * 60_000,       // 2min — friend list rarely changes
+    refetchInterval: 60_000,     // poll once per minute
   });
 }
 
@@ -41,8 +41,8 @@ export function useFollowing(userId: string | undefined) {
     queryKey: ['following', userId],
     queryFn: () => getFollowing(userId!),
     enabled: !!userId,
-    staleTime: 30_000,
-    refetchInterval: 20_000,
+    staleTime: 2 * 60_000,
+    refetchInterval: 60_000,
   });
 }
 
@@ -52,8 +52,8 @@ export function useFollowRequests(userId: string | undefined) {
     queryKey: ['followRequests', userId],
     queryFn: () => getFollowRequests(userId!),
     enabled: !!userId,
-    staleTime: 15_000,
-    refetchInterval: 15_000,  // check for new requests every 15s
+    staleTime: 30_000,
+    refetchInterval: 30_000,  // check for new requests every 30s
   });
 }
 

@@ -33,7 +33,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('id', userId)
       .single();
 
-    if (!error && data) {
+    if (error) {
+      console.error('[fudi auth] Failed to fetch profile:', error.message);
+      setProfile(null);
+      return;
+    }
+    if (data) {
       setProfile(data);
     }
   }

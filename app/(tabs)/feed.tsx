@@ -18,6 +18,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { router, useFocusEffect } from 'expo-router';
 import { registerForPushNotifications, configureForegroundNotifications } from '../../lib/notifications';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useAppStore } from '../../store';
 import { useFeed, useUserFeed } from '../../lib/hooks/useFeed';
 import { useSavePost, useToggleReaction } from '../../lib/hooks/useVisit';
@@ -175,8 +176,6 @@ const notifStyles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 18,
     paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(193,200,194,0.15)',
   },
   panelTitle: {
     fontFamily: 'Manrope-Bold',
@@ -298,6 +297,7 @@ export default function FeedScreen() {
       'Opciones de cuenta',
       [
         { text: 'Ver perfil', onPress: () => router.push(`/profile/${currentUser?.id}`) },
+        { text: 'Ajustes', onPress: () => router.push('/settings') },
         {
           text: 'Cerrar sesión',
           style: 'destructive',
@@ -608,6 +608,7 @@ function RelationLabel({ isMutual }: { isMutual: boolean }) {
 }
 
 function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post: FeedPost; currentUserId?: string; showRelationLabel?: boolean }) {
+  const showToast = useAppStore((s) => s.showToast);
   const timeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
@@ -628,10 +629,10 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
 
   function handleLike() {
     if (!currentUserId || currentUserId === post.user.id) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const next = !likeActive;
     setLikeActive(next);
     setLikeCount((c) => next ? c + 1 : Math.max(0, c - 1));
-    // Instagram-style pop animation
     Animated.sequence([
       Animated.spring(likeScale, { toValue: 1.35, useNativeDriver: true, speed: 30, bounciness: 12 }),
       Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 6 }),
@@ -641,17 +642,19 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
 
   async function handleBookmark() {
     if (!currentUserId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const next = !postSaved;
     setPostSaved(next);
     try {
       await toggleSavePost({ visitId: post.id, save: next });
+      if (next) showToast('Publicación guardada');
     } catch {
       setPostSaved(!next);
     }
   }
 
   async function handleShare() {
-    const name = getDisplayName(post.restaurant as any);
+    const name = getDisplayName(post.restaurant as any, 'post');
     const score = post.rank_score;
     const url = `https://fudi.app/visit/${post.id}`;
     try {
@@ -719,7 +722,7 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
                   </Text>
                 ) : null}
                 <Text style={{ fontFamily: 'NotoSerif-BoldItalic', fontSize: 30, color: '#ffffff', lineHeight: 34 }} numberOfLines={2}>
-                  {getDisplayName(post.restaurant as any)}
+                  {getDisplayName(post.restaurant as any, 'post')}
                 </Text>
                 {post.restaurant.cuisine ? (
                   <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
@@ -754,7 +757,7 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
               <Text style={styles.noPhotoNeighborhood}>{post.restaurant.neighborhood}</Text>
             ) : null}
             <Text style={styles.noPhotoName} numberOfLines={1}>
-              {getDisplayName(post.restaurant as any)}
+              {getDisplayName(post.restaurant as any, 'post')}
             </Text>
             {post.restaurant.cuisine ? (
               <Text style={styles.noPhotoCuisine}>{post.restaurant.cuisine}</Text>
@@ -789,12 +792,12 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
         <TouchableOpacity
           onPress={handleBookmark}
           activeOpacity={0.7}
-          style={{ marginLeft: 14 }}
+          style={[styles.saveBtn, postSaved && styles.saveBtnActive]}
         >
           <MaterialIcons
-            name={postSaved ? 'bookmark' : 'bookmark-border'}
-            size={24}
-            color={postSaved ? '#032417' : '#1c1c18'}
+            name={postSaved ? 'bookmark-added' : 'bookmark-add'}
+            size={20}
+            color={postSaved ? '#032417' : '#727973'}
           />
         </TouchableOpacity>
       </View>
@@ -872,23 +875,20 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 50,
-    backgroundColor: 'rgba(253,249,242,0.90)',
+    backgroundColor: 'rgba(253,249,242,0.94)',
     paddingTop: Platform.OS === 'ios' ? 52 : 32,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(193,200,194,0.15)',
+    paddingBottom: 0,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 24,
-    paddingBottom: 8,
+    paddingBottom: 10,
   },
   feedToggleRow: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.06)',
+    backgroundColor: 'rgba(241,237,230,0.60)',
   },
   feedToggleTab: {
     flex: 1,
@@ -1038,32 +1038,32 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   noPhotoBanner: {
-    backgroundColor: '#1a3a2b',
+    backgroundColor: '#f1ede6',
     paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingVertical: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 14,
   },
   noPhotoNeighborhood: {
-    fontFamily: 'Manrope-ExtraBold',
+    fontFamily: 'Manrope-Bold',
     fontSize: 9,
-    color: '#c7ef48',
+    color: '#727973',
     textTransform: 'uppercase',
-    letterSpacing: 2.5,
-    marginBottom: 3,
+    letterSpacing: 2,
+    marginBottom: 2,
   },
   noPhotoName: {
     fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 18,
-    color: '#ffffff',
-    lineHeight: 22,
+    color: '#1c1c18',
+    lineHeight: 23,
   },
   noPhotoCuisine: {
     fontFamily: 'Manrope-Medium',
     fontSize: 11,
-    color: 'rgba(255,255,255,0.5)',
-    marginTop: 3,
+    color: '#727973',
+    marginTop: 2,
   },
   bookmarkBtn: {
     position: 'absolute',
@@ -1119,16 +1119,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: '#f1ede6',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(193,200,194,0.30)',
   },
   chipHighlighted: {
-    backgroundColor: 'rgba(199,239,72,0.25)',
-    borderColor: 'rgba(84,107,0,0.20)',
+    backgroundColor: 'rgba(199,239,72,0.22)',
   },
   chipStar: {
     fontSize: 10,
@@ -1164,8 +1161,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 6,
+    paddingVertical: 10,
   },
   likeBtn: {
     flexDirection: 'row',
@@ -1179,6 +1175,18 @@ const styles = StyleSheet.create({
   },
   likeCountActive: {
     color: '#e0314b',
+  },
+  saveBtn: {
+    marginLeft: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f1ede6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveBtnActive: {
+    backgroundColor: '#c7ef48',
   },
   captionWrapper: {
     paddingHorizontal: 16,

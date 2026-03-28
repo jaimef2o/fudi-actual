@@ -253,7 +253,7 @@ export default function DescubrirScreen() {
                     );
                   })()}
                   <View style={styles.cardInfo}>
-                    <Text style={styles.cardName} numberOfLines={2}>{getDisplayName(r as any)}</Text>
+                    <Text style={styles.cardName} numberOfLines={2}>{getDisplayName(r as any, 'search')}</Text>
                     {(r.cuisine || r.price_level) ? (
                       <View style={{ flexDirection: 'row', gap: 5, marginTop: 5 }}>
                         <InfoTag value={r.cuisine} />

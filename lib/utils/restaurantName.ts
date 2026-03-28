@@ -1,28 +1,49 @@
-import { extractBrandPrefixPublic } from '../chains';
+import { matchChain, getChainName } from '../chains';
 
 /**
- * Returns the best display name for a restaurant.
+ * Context-aware display name for restaurants.
  *
- * Priority:
- * 1. brand_name (Google-verified chain, stored in DB) → use as-is
- * 2. Name has a detectable location suffix (e.g. "SUMO Juan Bravo") → return prefix ("SUMO")
- * 3. Plain name → return as-is
+ * Rules from CHAIN_CATALOG v2:
+ * - 'post' / 'detail' → show full local name ("Grosso Napoletano Malasaña")
+ * - 'ranking' / 'search' → show chain brand name ("Grosso Napoletano")
+ * - Independent restaurants → always show restaurant.name as-is
  *
- * Used in Descubrir, Listas, Profile ranking, and anywhere outside the
- * restaurant detail page (where the full location name makes sense).
+ * Priority for chain detection:
+ * 1. chain_name column (pre-resolved slug from catalog, stored in DB)
+ * 2. Live regex match against CHAIN_CATALOG
+ * 3. Fallback: restaurant.name as-is
  */
-export function getDisplayName(restaurant: {
-  name: string;
-  brand_name?: string | null;
-}): string {
-  if (restaurant.brand_name) return restaurant.brand_name;
+export type DisplayContext = 'post' | 'ranking' | 'search' | 'detail';
 
-  const detected = extractBrandPrefixPublic(restaurant.name);
-  if (detected?.hasLocationSuffix) {
-    const prefixWordCount = detected.prefix.split(' ').length;
-    // Preserve original casing ("SUMO" not "Sumo", "La Tagliatella" not "la tagliatella")
-    return restaurant.name.trim().split(/\s+/).slice(0, prefixWordCount).join(' ');
+export function getDisplayName(
+  restaurant: {
+    name: string;
+    chain_name?: string | null;
+    brand_name?: string | null;
+  },
+  context: DisplayContext = 'post'
+): string {
+  // For posts and detail views, always show the full local name
+  if (context === 'post' || context === 'detail') {
+    return restaurant.name;
   }
 
+  // For ranking and search, show the chain brand name if it's a chain
+  // 1. Try chain_name column (pre-resolved)
+  if (restaurant.chain_name) {
+    const brandName = getChainName(restaurant.chain_name);
+    if (brandName) return brandName;
+  }
+
+  // 2. Legacy: try brand_name column (old system)
+  if (restaurant.brand_name) {
+    return restaurant.brand_name;
+  }
+
+  // 3. Try live regex match
+  const match = matchChain(restaurant.name);
+  if (match) return match.name;
+
+  // 4. Independent restaurant — return as-is
   return restaurant.name;
 }

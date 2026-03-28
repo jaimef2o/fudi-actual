@@ -20,6 +20,7 @@ export type FeedPost = {
   restaurant: {
     id: string;
     name: string;
+    chain_name?: string | null;
     brand_name?: string | null;
     neighborhood: string | null;
     city: string | null;
@@ -67,7 +68,7 @@ export async function getFeed(
       visibility,
       user_id,
       user:users!user_id (id, name, avatar_url),
-      restaurant:restaurants!restaurant_id (id, name, neighborhood, city, cover_image_url, cuisine, price_level),
+      restaurant:restaurants!restaurant_id (id, name, chain_name, neighborhood, city, cover_image_url, cuisine, price_level),
       dishes:visit_dishes (name, highlighted, position),
       photos:visit_photos!visit_id (photo_url, type),
       tags:visit_tags (
@@ -111,7 +112,7 @@ export async function getUserFeed(
       sentiment,
       visibility,
       user:users!user_id (id, name, avatar_url),
-      restaurant:restaurants!restaurant_id (id, name, neighborhood, city, cover_image_url, cuisine, price_level),
+      restaurant:restaurants!restaurant_id (id, name, chain_name, neighborhood, city, cover_image_url, cuisine, price_level),
       dishes:visit_dishes (name, highlighted, position),
       photos:visit_photos!visit_id (photo_url, type),
       tags:visit_tags (

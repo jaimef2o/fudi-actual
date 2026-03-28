@@ -306,7 +306,7 @@ export default function RankingScreen() {
                   </View>
 
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.rankName} numberOfLines={1} ellipsizeMode="tail">{getDisplayName(restaurant as any)}</Text>
+                    <Text style={styles.rankName} numberOfLines={1} ellipsizeMode="tail">{getDisplayName(restaurant as any, 'ranking')}</Text>
                     {(restaurant.cuisine || restaurant.price) ? (
                       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
                         <InfoTag value={restaurant.cuisine} />
