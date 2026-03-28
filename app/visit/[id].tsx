@@ -121,27 +121,48 @@ export default function VisitScreen() {
     }
   }
 
-  const restaurantPhotos = (visit as any)?.photos
-    ?.filter((p: any) => p.type === 'restaurant')
+  // Restaurant photos — all of them, cover as fallback if none
+  const rawRestaurantPhotos: string[] = (visit as any)?.photos
+    ?.filter((p: any) => p.type === 'restaurant' && p.photo_url)
     ?.map((p: any) => p.photo_url) ?? [];
-  const dishPhotos: { url: string; name: string; rank: number }[] = [];
+  const restaurantImages = rawRestaurantPhotos.length > 0
+    ? rawRestaurantPhotos
+    : ((visit as any)?.restaurant?.cover_image_url ? [(visit as any).restaurant.cover_image_url] : []);
 
-  // Build carousel frames from real photos
+  // Dish photos: match visit_photos (dish_id set) → visitDishes for name + highlighted, sorted highlighted first
+  const dishPhotoEntries = ((visit as any)?.photos ?? [])
+    .filter((p: any) => p.dish_id && p.photo_url)
+    .map((p: any) => {
+      const dish = (visitDishes as any[]).find((d: any) => d.id === p.dish_id);
+      return {
+        url: p.photo_url as string,
+        name: dish?.name ?? '',
+        highlighted: dish?.highlighted ?? false,
+        position: dish?.position ?? 99,
+      };
+    })
+    .sort((a: any, b: any) => {
+      if (a.highlighted !== b.highlighted) return a.highlighted ? -1 : 1;
+      return a.position - b.position;
+    });
+
+  // Build carousel frames: all restaurant photos first, then dish photos
   const realFrames = [
-    {
-      image: restaurantPhotos[0] ?? (visit as any)?.restaurant?.cover_image_url ?? null,
+    ...restaurantImages.map((img) => ({
+      image: img,
       type: 'restaurant' as const,
       title: resolvedRestaurantName,
       subtitle: (visit as any)?.restaurant?.neighborhood ?? '',
-    },
-    ...dishPhotos.slice(0, 2).map((d: any, i: number) => ({
+      highlighted: false,
+    })),
+    ...dishPhotoEntries.map((d: any) => ({
       image: d.url,
-      type: i === 0 ? ('dish' as const) : ('dish2' as const),
-      badge: i === 0 ? 'Plato Destacado' : undefined,
+      type: 'dish' as const,
       title: d.name,
       subtitle: '',
+      highlighted: d.highlighted,
     })),
-  ].filter((f) => f.image !== null);
+  ].filter((f) => f.image);
 
   const data = {
     restaurantId: (visit as any)?.restaurant?.id ?? '',
@@ -247,17 +268,12 @@ export default function VisitScreen() {
                   )}
                   {frame.type === 'dish' && (
                     <>
-                      <View style={styles.frameBadge}>
-                        <Text style={styles.frameBadgeText}>{frame.badge}</Text>
-                      </View>
+                      {frame.highlighted && (
+                        <View style={styles.frameBadge}>
+                          <Text style={styles.frameBadgeText}>★ Destacado</Text>
+                        </View>
+                      )}
                       <Text style={styles.frameTitleMedium}>{frame.title}</Text>
-                      <Text style={styles.frameSubtitleItalic}>{frame.subtitle}</Text>
-                    </>
-                  )}
-                  {frame.type === 'dish2' && (
-                    <>
-                      <Text style={styles.frameTitleMedium}>{frame.title}</Text>
-                      <Text style={styles.frameSubtitleItalic}>{frame.subtitle}</Text>
                     </>
                   )}
                 </View>
