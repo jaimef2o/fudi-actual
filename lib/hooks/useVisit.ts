@@ -5,6 +5,7 @@ import {
   createVisit,
   deleteVisit,
   updateVisit,
+  updateVisitFull,
   toggleReaction,
   updateVisitRankPosition,
   bookmarkRestaurant,
@@ -13,6 +14,7 @@ import {
   getRestaurantExistingScore,
   CreateVisitInput,
   UpdateVisitInput,
+  UpdateVisitFullInput,
 } from '../api/visits';
 import { savePost, unsavePost, getSavedPosts } from '../api/savedPosts';
 
@@ -75,6 +77,20 @@ export function useUpdateVisit() {
       queryClient.invalidateQueries({ queryKey: ['visit', visitId] });
       queryClient.invalidateQueries({ queryKey: ['feed'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['ranking'], exact: false });
+    },
+  });
+}
+
+export function useUpdateVisitFull() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ visitId, userId, input }: { visitId: string; userId: string; input: UpdateVisitFullInput }) =>
+      updateVisitFull(visitId, userId, input),
+    onSuccess: (_, { visitId, userId }) => {
+      queryClient.invalidateQueries({ queryKey: ['visit', visitId] });
+      queryClient.invalidateQueries({ queryKey: ['feed'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['ranking', userId], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['userFeed', userId] });
     },
   });
 }

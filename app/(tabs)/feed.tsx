@@ -618,7 +618,13 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
     return `hace ${Math.floor(hrs / 24)}d`;
   };
 
-  const images = post.photos?.map((p: any) => p.photo_url) ?? [];
+  const userImages = post.photos?.map((p: any) => p.photo_url) ?? [];
+  // Fall back to Google Places cover image when the user posted no photos
+  const images = userImages.length > 0
+    ? userImages
+    : post.restaurant.cover_image_url
+      ? [post.restaurant.cover_image_url]
+      : [];
   const [imgIndex, setImgIndex] = useState(0);
   const [postSaved, setPostSaved] = useState(false);
   const [likeActive, setLikeActive] = useState(false);

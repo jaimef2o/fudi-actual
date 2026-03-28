@@ -25,6 +25,7 @@ export type CreateVisitInput = {
   photos?: { photo_url: string; type: 'restaurant' | 'dish' }[];
   restaurant_photo_urls?: string[]; // legacy
   tagged_user_ids?: string[];
+  dish_photo_urls?: { dish_index: number; photo_url: string }[];
 };
 
 export type VisitDetail = VisitRow & {
@@ -288,7 +289,7 @@ export async function deleteVisit(visitId: string, userId: string): Promise<void
 // ─── Create ──────────────────────────────────────────────────────────────────
 
 export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
-  const { dishes, photos, restaurant_photo_urls, tagged_user_ids, ...visitData } = input;
+  const { dishes, photos, restaurant_photo_urls, tagged_user_ids, dish_photo_urls, ...visitData } = input;
   // Merge both photo formats
   const allRestaurantPhotoUrls = [
     ...(restaurant_photo_urls ?? []),
@@ -310,8 +311,9 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
 
   // 2. Insert dishes (free-text, binary highlighted flag, insertion order)
   const validDishes = (dishes ?? []).filter((d) => d.name?.trim());
+  let insertedDishes: any[] = [];
   if (validDishes.length > 0) {
-    const { error: dishesError } = await supabase
+    const { data: dishData, error: dishesError } = await supabase
       .from('visit_dishes')
       .insert(
         validDishes.map((d, i) => ({
@@ -320,8 +322,26 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
           highlighted: d.highlighted ?? false,
           position: d.position ?? i,
         }))
-      );
+      )
+      .select();
     if (dishesError) throw dishesError;
+    insertedDishes = dishData ?? [];
+  }
+
+  // 2b. Insert per-dish photos (linked to dish IDs)
+  if (dish_photo_urls && dish_photo_urls.length > 0 && insertedDishes.length > 0) {
+    const dishPhotoRows = dish_photo_urls
+      .filter((dp) => insertedDishes[dp.dish_index])
+      .map((dp) => ({
+        visit_id: visit.id,
+        dish_id: insertedDishes[dp.dish_index].id,
+        photo_url: dp.photo_url,
+        type: 'dish' as const,
+      }));
+    if (dishPhotoRows.length > 0) {
+      const { error: dpError } = await supabase.from('visit_photos').insert(dishPhotoRows);
+      if (dpError) throw dpError;
+    }
   }
 
   // 3. Insert restaurant photos
@@ -363,6 +383,85 @@ export async function updateVisit(visitId: string, updates: UpdateVisitInput): P
     .update(updates)
     .eq('id', visitId);
   if (error) throw error;
+}
+
+export type UpdateVisitFullInput = UpdateVisitInput & {
+  dishes?: { name: string; highlighted: boolean; position: number }[];
+  new_restaurant_photo_urls?: string[];
+  removed_photo_ids?: string[];
+  dish_photo_urls?: { dish_index: number; photo_url: string }[];
+};
+
+export async function updateVisitFull(
+  visitId: string,
+  userId: string,
+  input: UpdateVisitFullInput,
+): Promise<void> {
+  const { dishes, new_restaurant_photo_urls, removed_photo_ids, dish_photo_urls, ...visitUpdates } = input;
+
+  // 1. Update visit fields
+  const updateFields = Object.fromEntries(
+    Object.entries(visitUpdates).filter(([, v]) => v !== undefined)
+  );
+  if (Object.keys(updateFields).length > 0) {
+    const { error } = await supabase
+      .from('visits')
+      .update(updateFields)
+      .eq('id', visitId)
+      .eq('user_id', userId);
+    if (error) throw error;
+  }
+
+  // 2. Replace dishes
+  if (dishes !== undefined) {
+    await supabase.from('visit_dishes').delete().eq('visit_id', visitId);
+    let insertedDishes: any[] = [];
+    if (dishes.length > 0) {
+      const { data: dishData, error: dErr } = await supabase
+        .from('visit_dishes')
+        .insert(
+          dishes.map((d, i) => ({
+            visit_id: visitId,
+            name: d.name.trim(),
+            highlighted: d.highlighted,
+            position: d.position ?? i,
+          }))
+        )
+        .select();
+      if (dErr) throw dErr;
+      insertedDishes = dishData ?? [];
+    }
+    if (dish_photo_urls && dish_photo_urls.length > 0 && insertedDishes.length > 0) {
+      const rows = dish_photo_urls
+        .filter((dp) => insertedDishes[dp.dish_index])
+        .map((dp) => ({
+          visit_id: visitId,
+          dish_id: insertedDishes[dp.dish_index].id,
+          photo_url: dp.photo_url,
+          type: 'dish' as const,
+        }));
+      if (rows.length > 0) {
+        await supabase.from('visit_photos').insert(rows);
+      }
+    }
+  }
+
+  // 3. Remove specific photos
+  if (removed_photo_ids && removed_photo_ids.length > 0) {
+    await supabase.from('visit_photos').delete().in('id', removed_photo_ids);
+  }
+
+  // 4. Add new restaurant photos
+  if (new_restaurant_photo_urls && new_restaurant_photo_urls.length > 0) {
+    await supabase.from('visit_photos').insert(
+      new_restaurant_photo_urls.map((url) => ({
+        visit_id: visitId,
+        dish_id: null,
+        photo_url: url,
+        type: 'restaurant' as const,
+      }))
+    );
+  }
 }
 
 // ─── Reactions ────────────────────────────────────────────────────────────────

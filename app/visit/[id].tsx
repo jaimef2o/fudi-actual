@@ -4,21 +4,18 @@ import {
   ScrollView,
   Image,
   TouchableOpacity,
-  TextInput,
-  Modal,
   StyleSheet,
   Dimensions,
   Platform,
   ActivityIndicator,
   Alert,
   Share,
-  KeyboardAvoidingView,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
-import { useVisit, useBookmark, useSavePost, useDeleteVisit, useUpdateVisit } from '../../lib/hooks/useVisit';
+import { useVisit, useBookmark, useSavePost, useDeleteVisit } from '../../lib/hooks/useVisit';
 import { useVisitDishes } from '../../lib/hooks/useDishes';
 import { useAppStore } from '../../store';
 import { scorePalette } from '../../lib/sentimentColors';
@@ -51,9 +48,6 @@ export default function VisitScreen() {
   const [activeFrame, setActiveFrame] = useState(0);
   const [restaurantSaved, setRestaurantSaved] = useState(false);
   const [postSaved, setPostSaved] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editNote, setEditNote] = useState('');
-  const [editSentiment, setEditSentiment] = useState<'loved' | 'fine' | 'disliked'>('loved');
   const { data: visit, isLoading } = useVisit(id);
   const { data: visitDishes = [] } = useVisitDishes(id);
   const currentUser = useAppStore((s) => s.currentUser);
@@ -61,7 +55,6 @@ export default function VisitScreen() {
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
   const { mutateAsync: toggleSavePost } = useSavePost(currentUser?.id);
   const { mutateAsync: deleteVisit, isPending: isDeleting } = useDeleteVisit();
-  const { mutateAsync: updateVisit, isPending: isSavingEdit } = useUpdateVisit();
 
   const isOwnPost = !!currentUser?.id && (visit as any)?.user_id === currentUser.id;
 
@@ -112,22 +105,6 @@ export default function VisitScreen() {
 
   const visitRestaurant = (visit as any)?.restaurant;
   const resolvedRestaurantName = visitRestaurant ? getDisplayName(visitRestaurant, 'detail') : 'un restaurante';
-
-  function handleOpenEdit() {
-    setEditNote((visit as any)?.note ?? '');
-    setEditSentiment((visit as any)?.sentiment ?? 'loved');
-    setEditModalOpen(true);
-  }
-
-  async function handleSaveEdit() {
-    if (!id) return;
-    try {
-      await updateVisit({ visitId: id, updates: { note: editNote.trim() || null, sentiment: editSentiment } });
-      setEditModalOpen(false);
-    } catch {
-      Alert.alert('Error', 'No se pudieron guardar los cambios. Inténtalo de nuevo.');
-    }
-  }
 
   async function handleShare() {
     const restaurantName = resolvedRestaurantName;
@@ -225,7 +202,7 @@ export default function VisitScreen() {
           <MaterialIcons name="arrow-back" size={24} color="#032417" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Publicación</Text>
-        <TouchableOpacity style={styles.headerBtn} onPress={isOwnPost ? handleOpenEdit : handleShare}>
+        <TouchableOpacity style={styles.headerBtn} onPress={isOwnPost ? () => router.push(`/edit-visit/${id}`) : handleShare}>
           <MaterialIcons name={isOwnPost ? 'edit' : 'ios-share'} size={22} color="#032417" />
         </TouchableOpacity>
       </View>
@@ -438,7 +415,7 @@ export default function VisitScreen() {
             <TouchableOpacity
               style={styles.actionBtnEdit}
               activeOpacity={0.8}
-              onPress={handleOpenEdit}
+              onPress={() => router.push(`/edit-visit/${id}`)}
             >
               <MaterialIcons name="edit" size={18} color="#032417" />
               <Text style={styles.actionBtnEditText}>Editar</Text>
@@ -464,91 +441,6 @@ export default function VisitScreen() {
         <View style={{ height: 48 }} />
       </ScrollView>
 
-      {/* Edit modal */}
-      <Modal
-        visible={editModalOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setEditModalOpen(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={{ flex: 1, justifyContent: 'flex-end' }}
-        >
-          <TouchableOpacity
-            style={{ flex: 1 }}
-            activeOpacity={1}
-            onPress={() => setEditModalOpen(false)}
-          />
-          <View style={styles.editSheet}>
-            {/* Handle */}
-            <View style={styles.editHandle} />
-            <Text style={styles.editTitle}>Editar publicación</Text>
-
-            {/* Sentiment selector */}
-            <Text style={styles.editFieldLabel}>Valoración</Text>
-            <View style={styles.sentimentRow}>
-              {(['loved', 'fine', 'disliked'] as const).map((s) => {
-                const labels = { loved: '😍 Me encantó', fine: '😐 Estuvo bien', disliked: '😕 No me convenció' };
-                const active = editSentiment === s;
-                const colors = { loved: '#c7ef48', fine: '#f7f3ec', disliked: '#fff0f0' };
-                const textColors = { loved: '#546b00', fine: '#032417', disliked: '#ba1a1a' };
-                return (
-                  <TouchableOpacity
-                    key={s}
-                    style={[
-                      styles.sentimentChip,
-                      active && { backgroundColor: colors[s], borderColor: 'transparent' },
-                    ]}
-                    onPress={() => setEditSentiment(s)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.sentimentChipText, active && { color: textColors[s] }]}>
-                      {labels[s]}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Note editor */}
-            <Text style={styles.editFieldLabel}>Nota / frase</Text>
-            <TextInput
-              style={styles.editNoteInput}
-              value={editNote}
-              onChangeText={setEditNote}
-              placeholder="Añade una nota sobre tu visita..."
-              placeholderTextColor="rgba(114,121,115,0.5)"
-              multiline
-              maxLength={280}
-            />
-            <Text style={styles.charCount}>{editNote.length}/280</Text>
-
-            {/* Buttons */}
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-              <TouchableOpacity
-                style={styles.editCancelBtn}
-                onPress={() => setEditModalOpen(false)}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.editCancelBtnText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.editSaveBtn, isSavingEdit && { opacity: 0.7 }]}
-                onPress={handleSaveEdit}
-                activeOpacity={0.8}
-                disabled={isSavingEdit}
-              >
-                {isSavingEdit ? (
-                  <ActivityIndicator size="small" color="#546b00" />
-                ) : (
-                  <Text style={styles.editSaveBtnText}>Guardar cambios</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </View>
   );
 }
@@ -890,100 +782,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
     color: '#ba1a1a',
-  },
-  // Edit modal
-  editSheet: {
-    backgroundColor: '#fdf9f2',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 48 : 32,
-    gap: 8,
-  },
-  editHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#c1c8c2',
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  editTitle: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 20,
-    color: '#032417',
-    marginBottom: 8,
-  },
-  editFieldLabel: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 10,
-    color: '#727973',
-    textTransform: 'uppercase',
-    letterSpacing: 2,
-    marginTop: 8,
-    marginBottom: 6,
-  },
-  sentimentRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  sentimentChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: '#f1ede6',
-    borderWidth: 1,
-    borderColor: 'rgba(193,200,194,0.3)',
-  },
-  sentimentChipText: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 13,
-    color: '#727973',
-  },
-  editNoteInput: {
-    backgroundColor: '#f1ede6',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontFamily: 'NotoSerif-Italic',
-    fontSize: 15,
-    color: '#1c1c18',
-    lineHeight: 22,
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  charCount: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 11,
-    color: '#727973',
-    textAlign: 'right',
-    marginTop: 4,
-  },
-  editCancelBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: '#f1ede6',
-    alignItems: 'center',
-  },
-  editCancelBtnText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 14,
-    color: '#424844',
-  },
-  editSaveBtn: {
-    flex: 2,
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: '#c7ef48',
-    alignItems: 'center',
-  },
-  editSaveBtnText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 14,
-    color: '#546b00',
   },
   actionBtnText: {
     fontFamily: 'Manrope-Bold',

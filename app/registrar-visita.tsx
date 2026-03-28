@@ -18,7 +18,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../store';
 import { useCreateVisit, useRestaurantExistingScore } from '../lib/hooks/useVisit';
-import { useProfile } from '../lib/hooks/useProfile';
+import { useProfile, useFriends } from '../lib/hooks/useProfile';
 import { searchPlaces, getPlaceDetails, getPhotoUrl, extractNeighborhood, type PlaceCandidate } from '../lib/api/places';
 import { upsertRestaurant, getRestaurant } from '../lib/api/restaurants';
 import { pickImage, compressAndUpload } from '../lib/storage';
@@ -37,14 +37,18 @@ export default function RegistrarVisitaScreen() {
   const userCity = (profile as any)?.city ?? null;
   const { mutateAsync: createVisit, isPending } = useCreateVisit();
 
+  const { data: friendsRaw = [] } = useFriends(currentUser?.id);
+
   const [sentiment, setSentiment] = useState<'loved' | 'fine' | 'disliked' | null>(null);
   const [spendPerPerson, setSpendPerPerson] = useState<'0-20' | '20-35' | '35-60' | '60+' | null>(null);
   const [note, setNote] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [taggedUserIds, setTaggedUserIds] = useState<string[]>([]);
+  const [companionSearch, setCompanionSearch] = useState('');
 
   // Dish model (v2: free text, binary highlighted, insertion order)
-  type AddedDish = { name: string; highlighted: boolean };
+  type AddedDish = { name: string; highlighted: boolean; photo: string | null };
   const [addedDishes, setAddedDishes] = useState<AddedDish[]>([]);
   const [dishInputValue, setDishInputValue] = useState('');
   const dishInputRef = useRef<any>(null);
@@ -142,7 +146,7 @@ export default function RegistrarVisitaScreen() {
     const trimmed = name.trim();
     if (!trimmed) return;
     if (addedDishes.some((d) => d.name.toLowerCase() === trimmed.toLowerCase())) return;
-    setAddedDishes((prev) => [...prev, { name: trimmed, highlighted: false }]);
+    setAddedDishes((prev) => [...prev, { name: trimmed, highlighted: false, photo: null }]);
     setDishInputValue('');
     dishInputRef.current?.focus();
   }
@@ -155,6 +159,15 @@ export default function RegistrarVisitaScreen() {
 
   function removeDishFromList(index: number) {
     setAddedDishes((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function addDishPhoto(index: number) {
+    const uri = await pickImage({ aspect: [1, 1], allowsEditing: true, quality: 0.8 });
+    if (uri) {
+      setAddedDishes((prev) =>
+        prev.map((d, i) => i === index ? { ...d, photo: uri } : d)
+      );
+    }
   }
 
   async function handleAddPhoto() {
@@ -209,6 +222,19 @@ export default function RegistrarVisitaScreen() {
         uploadedRestaurantUrls.push(url);
       }
 
+      // Upload dish photos
+      const dishPhotoUrls: { dish_index: number; photo_url: string }[] = [];
+      for (let i = 0; i < finalDishes.length; i++) {
+        const dishPhoto = finalDishes[i].photo;
+        if (dishPhoto) {
+          const url = await compressAndUpload(
+            dishPhoto,
+            `visits/${currentUser.id}/${ts}_d${i}.jpg`,
+          );
+          dishPhotoUrls.push({ dish_index: i, photo_url: url });
+        }
+      }
+
       setUploading(false);
 
       const visit = await createVisit({
@@ -220,6 +246,8 @@ export default function RegistrarVisitaScreen() {
         dishes: finalDishes.map((d, i) => ({ name: d.name, highlighted: d.highlighted, position: i })),
         photos: uploadedRestaurantUrls.map((url) => ({ photo_url: url, type: 'restaurant' as const })),
         visibility: 'friends',
+        dish_photo_urls: dishPhotoUrls,
+        tagged_user_ids: taggedUserIds.length > 0 ? taggedUserIds : undefined,
       });
 
       router.navigate(
@@ -455,6 +483,30 @@ export default function RegistrarVisitaScreen() {
                         {d.name}
                       </Text>
 
+                      {/* Photo thumbnail or camera button */}
+                      {d.photo ? (
+                        <TouchableOpacity
+                          onPress={() => addDishPhoto(i)}
+                          activeOpacity={0.8}
+                          style={{ marginRight: 4 }}
+                        >
+                          <Image
+                            source={{ uri: d.photo }}
+                            style={{ width: 36, height: 36, borderRadius: 8 }}
+                            resizeMode="cover"
+                          />
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          onPress={() => addDishPhoto(i)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          activeOpacity={0.75}
+                          style={{ marginRight: 4 }}
+                        >
+                          <MaterialIcons name="add-a-photo" size={18} color="#c1c8c2" />
+                        </TouchableOpacity>
+                      )}
+
                       <TouchableOpacity
                         onPress={() => removeDishFromList(i)}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -534,6 +586,84 @@ export default function RegistrarVisitaScreen() {
             })}
           </View>
         </View>
+
+        {/* ACOMPAÑANTES */}
+        {(friendsRaw as any[]).length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionLabel}>ACOMPAÑANTES</Text>
+              <Text style={styles.optionalText}>
+                Opcional{taggedUserIds.length > 0 ? ` · ${taggedUserIds.length} etiquetado${taggedUserIds.length > 1 ? 's' : ''}` : ''}
+              </Text>
+            </View>
+
+            {/* Search */}
+            {(friendsRaw as any[]).length > 4 && (
+              <View style={[styles.searchBox, { marginBottom: 4 }]}>
+                <MaterialIcons name="search" size={18} color="#727973" />
+                <TextInput
+                  style={[styles.searchInput, { fontSize: 14 }]}
+                  placeholder="Buscar amigo..."
+                  placeholderTextColor="#c1c8c2"
+                  value={companionSearch}
+                  onChangeText={setCompanionSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {companionSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setCompanionSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <MaterialIcons name="close" size={16} color="#727973" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            {/* Friend chips */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {(friendsRaw as any[])
+                .filter((f: any) => {
+                  const name: string = f.friend?.name ?? '';
+                  return companionSearch.length === 0 || name.toLowerCase().includes(companionSearch.toLowerCase());
+                })
+                .map((f: any) => {
+                  const friend = f.friend as any;
+                  const isTagged = taggedUserIds.includes(friend.id);
+                  return (
+                    <TouchableOpacity
+                      key={friend.id}
+                      style={[
+                        styles.companionChip,
+                        isTagged && styles.companionChipActive,
+                      ]}
+                      onPress={() =>
+                        setTaggedUserIds((prev) =>
+                          isTagged ? prev.filter((id) => id !== friend.id) : [...prev, friend.id]
+                        )
+                      }
+                      activeOpacity={0.75}
+                    >
+                      {friend.avatar_url ? (
+                        <Image
+                          source={{ uri: friend.avatar_url }}
+                          style={styles.companionAvatar}
+                        />
+                      ) : (
+                        <View style={[styles.companionAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
+                          <MaterialIcons name="person" size={12} color="#727973" />
+                        </View>
+                      )}
+                      <Text style={[styles.companionName, isTagged && styles.companionNameActive]} numberOfLines={1}>
+                        {friend.name}
+                      </Text>
+                      {isTagged && (
+                        <MaterialIcons name="check" size={14} color="#546b00" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+            </View>
+          </View>
+        )}
 
         {/* CTA */}
         {/* Missing fields hint */}
@@ -870,5 +1000,33 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope-Bold',
     fontSize: 15,
     color: '#ffffff',
+  },
+  companionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#f1ede6',
+    maxWidth: 160,
+  },
+  companionChipActive: {
+    backgroundColor: '#e8f5c8',
+  },
+  companionAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+  },
+  companionName: {
+    fontFamily: 'Manrope-Medium',
+    fontSize: 13,
+    color: '#424844',
+    flexShrink: 1,
+  },
+  companionNameActive: {
+    fontFamily: 'Manrope-Bold',
+    color: '#032417',
   },
 });

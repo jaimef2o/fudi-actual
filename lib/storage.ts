@@ -1,7 +1,6 @@
 // @ts-nocheck
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { decode } from 'base64-arraybuffer';
 import { supabase } from './supabase';
 
 /**
@@ -51,31 +50,28 @@ export async function takePhoto(options?: {
 
 /**
  * Compress + upload a local image URI to Supabase Storage.
- * Gets base64 directly from ImageManipulator — no FileSystem.readAsStringAsync needed.
+ * Uses fetch() to get a Blob — avoids base64/ArrayBuffer which can hang on RN.
  * Returns the public URL.
  */
 export async function compressAndUpload(
   localUri: string,
   path: string,
 ): Promise<string> {
-  // Use ImageManipulator to resize AND get base64 in one step
+  // 1. Resize + compress with ImageManipulator (no base64 — just get the new URI)
   const result = await ImageManipulator.manipulateAsync(
     localUri,
     [{ resize: { width: 1200 } }],
-    {
-      compress: 0.8,
-      format: ImageManipulator.SaveFormat.JPEG,
-      base64: true,  // ← get base64 directly, avoids FileSystem read
-    },
+    { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
   );
 
-  if (!result.base64) throw new Error('Image compression returned no data');
+  // 2. Read the compressed file as a Blob via fetch (reliable on React Native)
+  const fetchResponse = await fetch(result.uri);
+  const blob = await fetchResponse.blob();
 
-  const arrayBuffer = decode(result.base64);
-
+  // 3. Upload to Supabase Storage
   const { error } = await supabase.storage
     .from('photos')
-    .upload(path, arrayBuffer, {
+    .upload(path, blob, {
       contentType: 'image/jpeg',
       upsert: true,
     });
