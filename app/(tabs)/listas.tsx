@@ -236,6 +236,7 @@ export default function ListasScreen() {
 
       <ScrollView
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={true}
         stickyHeaderIndices={[1]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"

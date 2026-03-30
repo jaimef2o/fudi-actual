@@ -345,6 +345,7 @@ export default function AmigosScreen() {
       <ScrollView
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={true}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >

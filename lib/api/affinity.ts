@@ -94,19 +94,13 @@ export async function computeAffinity(
  * Call this after a user creates/updates a visit.
  */
 export async function refreshAffinityForUser(userId: string): Promise<void> {
-  // Get all people this user follows
-  const { data: rels } = await supabase
-    .from('relationships')
-    .select('target_id')
-    .eq('user_id', userId);
+  // Get all people this user follows + who follows back (parallel)
+  const [{ data: rels }, { data: reverseRels }] = await Promise.all([
+    supabase.from('relationships').select('target_id').eq('user_id', userId),
+    supabase.from('relationships').select('user_id').eq('target_id', userId),
+  ]);
 
   if (!rels?.length) return;
-
-  // Get who follows this user back (mutual)
-  const { data: reverseRels } = await supabase
-    .from('relationships')
-    .select('user_id')
-    .eq('target_id', userId);
 
   const reverseSet = new Set((reverseRels ?? []).map((r: any) => r.user_id));
   const mutualIds = (rels ?? [])
@@ -122,20 +116,13 @@ export async function refreshAffinityForUser(userId: string): Promise<void> {
     })
   );
 
-  // Update both directions
-  for (const { userId: uid, friendId, score } of updates) {
-    await supabase
-      .from('relationships')
-      .update({ affinity_score: score })
-      .eq('user_id', uid)
-      .eq('target_id', friendId);
-
-    await supabase
-      .from('relationships')
-      .update({ affinity_score: score })
-      .eq('user_id', friendId)
-      .eq('target_id', uid);
-  }
+  // Update both directions (batch all updates in parallel)
+  await Promise.all(
+    updates.flatMap(({ userId: uid, friendId, score }) => [
+      supabase.from('relationships').update({ affinity_score: score }).eq('user_id', uid).eq('target_id', friendId),
+      supabase.from('relationships').update({ affinity_score: score }).eq('user_id', friendId).eq('target_id', uid),
+    ])
+  );
 }
 
 /**

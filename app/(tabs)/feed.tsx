@@ -13,8 +13,9 @@ import {
   Modal,
   Animated,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import { router, useFocusEffect } from 'expo-router';
 import { registerForPushNotifications, configureForegroundNotifications } from '../../lib/notifications';
 import { BlurView } from 'expo-blur';
@@ -114,7 +115,7 @@ function NotifPanel({
                     activeOpacity={0.8}
                   >
                     {req.avatar_url ? (
-                      <Image source={{ uri: req.avatar_url }} style={notifStyles.avatar} />
+                      <ExpoImage source={{ uri: req.avatar_url }} style={notifStyles.avatar} contentFit="cover" cachePolicy="memory-disk" />
                     ) : (
                       <View style={[notifStyles.avatar, notifStyles.avatarPlaceholder]}>
                         <MaterialIcons name="person" size={18} color="#727973" />
@@ -287,7 +288,7 @@ function formatSpend(spend: string | null | undefined): string | null {
 }
 
 function ScoreBadge({ score }: { score: number }) {
-  const pal = scorePalette(score);
+  const pal = useMemo(() => scorePalette(score), [score]);
   const animVal = useRef(new Animated.Value(0)).current;
   const [displayScore, setDisplayScore] = useState('0.0');
 
@@ -394,7 +395,12 @@ export default function FeedScreen() {
             accessibilityLabel="Mi perfil"
           >
             {currentUser?.avatar ? (
-              <Image source={{ uri: currentUser.avatar }} style={styles.headerAvatar} />
+              <ExpoImage
+                source={{ uri: currentUser.avatar }}
+                style={styles.headerAvatar}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+              />
             ) : (
               <View style={[styles.headerAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
                 <MaterialIcons name="person" size={20} color="#727973" />
@@ -486,6 +492,7 @@ export default function FeedScreen() {
         ref={scrollRef}
         contentContainerStyle={styles.feedContainer}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={true}
         refreshControl={
           <RefreshControl
             refreshing={isFetching && !isLoading}
@@ -619,7 +626,7 @@ function RelationLabel({ isMutual }: { isMutual: boolean }) {
   );
 }
 
-function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post: FeedPost; currentUserId?: string; showRelationLabel?: boolean }) {
+const RealFeedCard = memo(function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post: FeedPost; currentUserId?: string; showRelationLabel?: boolean }) {
   const showToast = useAppStore((s) => s.showToast);
   const timeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
@@ -638,32 +645,34 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
     highlighted?: boolean;
   };
 
-  const restaurantPhotos = (post.photos ?? []).filter((p: any) => p.type === 'restaurant');
-  const dishPhotos = (post.photos ?? [])
-    .filter((p: any) => p.type === 'dish')
-    .map((p: any) => {
-      const dish = (post.dishes ?? []).find((d: any) => d.id === p.dish_id);
-      return {
-        url: p.photo_url as string,
-        kind: 'dish' as const,
-        dishName: dish?.name ?? '',
-        highlighted: dish?.highlighted ?? false,
-        position: dish?.position ?? 99,
-      };
-    })
-    .sort((a: any, b: any) => {
-      if (a.highlighted !== b.highlighted) return a.highlighted ? -1 : 1;
-      return a.position - b.position;
-    });
+  const frames: Frame[] = useMemo(() => {
+    const restaurantPhotos = (post.photos ?? []).filter((p: any) => p.type === 'restaurant');
+    const dishPhotos = (post.photos ?? [])
+      .filter((p: any) => p.type === 'dish')
+      .map((p: any) => {
+        const dish = (post.dishes ?? []).find((d: any) => d.id === p.dish_id);
+        return {
+          url: p.photo_url as string,
+          kind: 'dish' as const,
+          dishName: dish?.name ?? '',
+          highlighted: dish?.highlighted ?? false,
+          position: dish?.position ?? 99,
+        };
+      })
+      .sort((a: any, b: any) => {
+        if (a.highlighted !== b.highlighted) return a.highlighted ? -1 : 1;
+        return a.position - b.position;
+      });
 
-  const frames: Frame[] = [
-    ...(restaurantPhotos.length > 0
-      ? restaurantPhotos.map((p: any) => ({ url: p.photo_url, kind: 'restaurant' as const }))
-      : post.restaurant?.cover_image_url
-        ? [{ url: post.restaurant.cover_image_url, kind: 'restaurant' as const }]
-        : []),
-    ...dishPhotos,
-  ];
+    return [
+      ...(restaurantPhotos.length > 0
+        ? restaurantPhotos.map((p: any) => ({ url: p.photo_url, kind: 'restaurant' as const }))
+        : post.restaurant?.cover_image_url
+          ? [{ url: post.restaurant.cover_image_url, kind: 'restaurant' as const }]
+          : []),
+      ...dishPhotos,
+    ];
+  }, [post.photos, post.dishes, post.restaurant?.cover_image_url]);
 
   const [imgIndex, setImgIndex] = useState(0);
   const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
@@ -746,7 +755,13 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
           activeOpacity={0.75}
         >
           {post.user.avatar_url ? (
-            <Image source={{ uri: post.user.avatar_url }} style={styles.userAvatar} />
+            <ExpoImage
+              source={{ uri: post.user.avatar_url }}
+              style={styles.userAvatar}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={150}
+            />
           ) : (
             <View style={[styles.userAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
               <MaterialIcons name="person" size={18} color="#727973" />
@@ -786,10 +801,13 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
             viewabilityConfig={viewabilityConfig}
             renderItem={({ item: frame }) => (
               <View style={{ width: SCREEN_WIDTH - 32, aspectRatio: 1 }}>
-                <Image
+                <ExpoImage
                   source={{ uri: frame.url }}
                   style={{ width: '100%', height: '100%' }}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  transition={200}
+                  cachePolicy="memory-disk"
+                  recyclingKey={frame.url}
                 />
                 {/* Gradient overlay */}
                 <LinearGradient
@@ -971,7 +989,7 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
       </TouchableOpacity>
     </AnimatedCard>
   );
-}
+});
 
 const styles = StyleSheet.create({
   header: {

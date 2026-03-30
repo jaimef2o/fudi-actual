@@ -23,7 +23,7 @@ export function useVisit(visitId: string | undefined) {
     queryKey: ['visit', visitId],
     queryFn: () => getVisit(visitId!),
     enabled: !!visitId,
-    staleTime: 5 * 60_000,   // visit details rarely change
+    staleTime: 3 * 60_000,   // visit details change infrequently
     gcTime:   15 * 60_000,
   });
 }
@@ -33,7 +33,7 @@ export function useUserRanking(userId: string | undefined) {
     queryKey: ['ranking', userId],
     queryFn: () => getUserRanking(userId!),
     enabled: !!userId,
-    staleTime: 3 * 60_000,   // ranking changes only when user adds/updates a visit
+    staleTime: 2 * 60_000,   // ranking changes only when user adds/updates a visit
     gcTime:   10 * 60_000,
   });
 }
@@ -47,9 +47,8 @@ export function useCreateVisit() {
       const uid = variables.user_id;
       const rid = variables.restaurant_id;
 
-      // ── Feed: refetch NOW (in background) so it's ready when user navigates back ──
-      // refetchQueries triggers an immediate fetch even if the component isn't mounted
-      queryClient.refetchQueries({ queryKey: ['feed', uid], exact: true });
+      // ── Feed: invalidate so it refetches when the user navigates back ──
+      queryClient.invalidateQueries({ queryKey: ['feed', uid] });
       queryClient.invalidateQueries({ queryKey: ['userFeed', uid] });
 
       // ── Ranking ───────────────────────────────────────────────────────────
@@ -157,7 +156,7 @@ export function useRestaurantExistingScore(
     queryKey: ['restaurantExistingScore', userId, restaurantId],
     queryFn: () => getRestaurantExistingScore(userId!, restaurantId!),
     enabled: !!userId && !!restaurantId,
-    staleTime: 0,   // always fresh — checked right before comparison
+    staleTime: 2 * 60_000,   // scores don't change that frequently
     gcTime: 60_000,
   });
 }

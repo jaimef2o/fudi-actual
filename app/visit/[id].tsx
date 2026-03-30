@@ -13,6 +13,7 @@ import {
   ViewToken,
   TextInput,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { showAlert } from '../../lib/utils/alerts';
@@ -273,10 +274,13 @@ export default function VisitScreen() {
             viewabilityConfig={viewabilityConfig}
             renderItem={({ item: frame }) => (
               <View style={styles.carouselFrame}>
-                <Image
+                <ExpoImage
                   source={{ uri: frame.image }}
                   style={StyleSheet.absoluteFillObject}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  transition={200}
+                  cachePolicy="memory-disk"
+                  recyclingKey={frame.image}
                 />
                 <LinearGradient
                   colors={['transparent', 'rgba(0,0,0,0.80)']}
@@ -357,7 +361,7 @@ export default function VisitScreen() {
         <View style={styles.metaSection}>
           <View style={styles.metaRow}>
             {(visit as any)?.user?.avatar_url ? (
-              <Image source={{ uri: (visit as any).user.avatar_url }} style={styles.userAvatar} />
+              <ExpoImage source={{ uri: (visit as any).user.avatar_url }} style={styles.userAvatar} contentFit="cover" cachePolicy="memory-disk" transition={150} />
             ) : (
               <View style={[styles.userAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
                 <MaterialIcons name="person" size={22} color="#727973" />
@@ -571,7 +575,7 @@ export default function VisitScreen() {
             <View key={c.id} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
               <TouchableOpacity onPress={() => router.push(`/profile/${c.user.id}`)}>
                 {c.user.avatar_url ? (
-                  <Image source={{ uri: c.user.avatar_url }} style={{ width: 32, height: 32, borderRadius: 16 }} />
+                  <ExpoImage source={{ uri: c.user.avatar_url }} style={{ width: 32, height: 32, borderRadius: 16 }} contentFit="cover" cachePolicy="memory-disk" />
                 ) : (
                   <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }}>
                     <MaterialIcons name="person" size={16} color="#727973" />

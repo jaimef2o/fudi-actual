@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Share,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -228,7 +229,13 @@ export default function RestaurantScreen() {
         {/* ── SECCIÓN 1: HERO ── */}
         <View style={s.hero}>
           {coverImage ? (
-            <Image source={{ uri: coverImage }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+            <ExpoImage
+              source={{ uri: coverImage }}
+              style={StyleSheet.absoluteFillObject}
+              contentFit="cover"
+              transition={300}
+              cachePolicy="memory-disk"
+            />
           ) : (
             <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#1a3a2b', alignItems: 'center', justifyContent: 'center' }]}>
               <MaterialIcons name="restaurant" size={64} color="rgba(199,239,72,0.2)" />
@@ -322,10 +329,12 @@ export default function RestaurantScreen() {
                         <View style={s.avatarStack}>
                           {friendVisitors.map((v: any, i: number) =>
                             v.user?.avatar_url ? (
-                              <Image
+                              <ExpoImage
                                 key={v.id ?? i}
                                 source={{ uri: v.user.avatar_url }}
                                 style={[s.stackAvatar, { marginLeft: i > 0 ? -7 : 0 }]}
+                                contentFit="cover"
+                                cachePolicy="memory-disk"
                               />
                             ) : (
                               <View key={v.id ?? i} style={[s.stackAvatar, s.stackAvatarPlaceholder, { marginLeft: i > 0 ? -7 : 0 }]}>
@@ -411,7 +420,7 @@ export default function RestaurantScreen() {
                   >
                     {/* Avatar */}
                     {visit.user?.avatar_url ? (
-                      <Image source={{ uri: visit.user.avatar_url }} style={s.visitAvatar} />
+                      <ExpoImage source={{ uri: visit.user.avatar_url }} style={s.visitAvatar} contentFit="cover" cachePolicy="memory-disk" />
                     ) : (
                       <View style={[s.visitAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
                         <MaterialIcons name="person" size={18} color="#727973" />

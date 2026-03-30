@@ -87,18 +87,17 @@ export type FollowRequest = {
 
 // Mutual friends — bidirectional check (avoids needing type='mutual' which requires cross-user RLS)
 export async function getFriends(userId: string): Promise<FriendWithProfile[]> {
-  // Everyone I follow
-  const { data: iFollow, error: e1 } = await supabase
-    .from('relationships')
-    .select('target_id, friend:users!target_id(*)')
-    .eq('user_id', userId);
+  const [{ data: iFollow, error: e1 }, { data: followMe, error: e2 }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('target_id, friend:users!target_id(*)')
+      .eq('user_id', userId),
+    supabase
+      .from('relationships')
+      .select('user_id')
+      .eq('target_id', userId),
+  ]);
   if (e1) throw e1;
-
-  // Everyone who follows me
-  const { data: followMe, error: e2 } = await supabase
-    .from('relationships')
-    .select('user_id')
-    .eq('target_id', userId);
   if (e2) throw e2;
 
   const followMeSet = new Set((followMe ?? []).map((r: any) => r.user_id));
@@ -108,16 +107,17 @@ export async function getFriends(userId: string): Promise<FriendWithProfile[]> {
 
 // People I follow who haven't followed back yet (outgoing one-way)
 export async function getFollowing(userId: string): Promise<FriendWithProfile[]> {
-  const { data: iFollow, error: e1 } = await supabase
-    .from('relationships')
-    .select('target_id, friend:users!target_id(*)')
-    .eq('user_id', userId);
+  const [{ data: iFollow, error: e1 }, { data: followMe, error: e2 }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('target_id, friend:users!target_id(*)')
+      .eq('user_id', userId),
+    supabase
+      .from('relationships')
+      .select('user_id')
+      .eq('target_id', userId),
+  ]);
   if (e1) throw e1;
-
-  const { data: followMe, error: e2 } = await supabase
-    .from('relationships')
-    .select('user_id')
-    .eq('target_id', userId);
   if (e2) throw e2;
 
   const followMeSet = new Set((followMe ?? []).map((r: any) => r.user_id));
@@ -127,18 +127,17 @@ export async function getFollowing(userId: string): Promise<FriendWithProfile[]>
 
 // People who follow me but I haven't followed back (incoming requests)
 export async function getFollowRequests(userId: string): Promise<FollowRequest[]> {
-  // Everyone who follows me
-  const { data: followMe, error: e1 } = await supabase
-    .from('relationships')
-    .select('user_id, created_at, requester:users!user_id(*)')
-    .eq('target_id', userId);
+  const [{ data: followMe, error: e1 }, { data: iFollow, error: e2 }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('user_id, created_at, requester:users!user_id(*)')
+      .eq('target_id', userId),
+    supabase
+      .from('relationships')
+      .select('target_id')
+      .eq('user_id', userId),
+  ]);
   if (e1) throw e1;
-
-  // Everyone I follow
-  const { data: iFollow, error: e2 } = await supabase
-    .from('relationships')
-    .select('target_id')
-    .eq('user_id', userId);
   if (e2) throw e2;
 
   const iFollowSet = new Set((iFollow ?? []).map((r: any) => r.target_id));

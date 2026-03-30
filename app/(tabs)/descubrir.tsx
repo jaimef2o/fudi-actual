@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   RefreshControl,
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { showAlert } from '../../lib/utils/alerts';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useMemo } from 'react';
@@ -181,6 +182,7 @@ export default function DescubrirScreen() {
         <ScrollView
           contentContainerStyle={styles.container}
           showsVerticalScrollIndicator={false}
+          removeClippedSubviews={true}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           refreshControl={
@@ -358,7 +360,7 @@ export default function DescubrirScreen() {
                 >
                   <View style={styles.cardImageWrapper}>
                     {r.cover_image_url ? (
-                      <Image source={{ uri: r.cover_image_url }} style={styles.cardImage} resizeMode="cover" />
+                      <ExpoImage source={{ uri: r.cover_image_url }} style={styles.cardImage} contentFit="cover" transition={200} cachePolicy="memory-disk" />
                     ) : (
                       <View style={[styles.cardImage, { backgroundColor: '#1a3a2b', justifyContent: 'center', alignItems: 'center' }]}>
                         <MaterialIcons name="restaurant" size={40} color="rgba(199,239,72,0.4)" />
