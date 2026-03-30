@@ -2,12 +2,12 @@ import {
   View,
   Text,
   ScrollView,
+  FlatList,
   Image,
   TouchableOpacity,
   StyleSheet,
   Dimensions,
   Platform,
-  Alert,
   RefreshControl,
   ActivityIndicator,
   Modal,
@@ -17,7 +17,9 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { router, useFocusEffect } from 'expo-router';
 import { registerForPushNotifications, configureForegroundNotifications } from '../../lib/notifications';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { showAlert } from '../../lib/utils/alerts';
 import * as Haptics from 'expo-haptics';
 import { useAppStore } from '../../store';
 import { useFeed, useUserFeed } from '../../lib/hooks/useFeed';
@@ -27,8 +29,23 @@ import type { FeedPost } from '../../lib/api/feed';
 import { scorePalette } from '../../lib/sentimentColors';
 import { supabase } from '../../lib/supabase';
 import { getDisplayName } from '../../lib/utils/restaurantName';
+import { useShimmer, FeedCardSkeleton } from '../../components/SkeletonLoader';
+import { AnimatedCard } from '../../components/AnimatedCard';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// ─── Feed skeleton list (shown while loading) ─────────────────────────────────
+
+function FeedSkeletonList() {
+  const shimmer = useShimmer();
+  return (
+    <View style={{ gap: 16, paddingTop: 8 }}>
+      <FeedCardSkeleton shimmer={shimmer} />
+      <FeedCardSkeleton shimmer={shimmer} />
+      <FeedCardSkeleton shimmer={shimmer} />
+    </View>
+  );
+}
 
 // ─── Notification dropdown panel ─────────────────────────────────────────────
 
@@ -271,9 +288,26 @@ function formatSpend(spend: string | null | undefined): string | null {
 
 function ScoreBadge({ score }: { score: number }) {
   const pal = scorePalette(score);
+  const animVal = useRef(new Animated.Value(0)).current;
+  const [displayScore, setDisplayScore] = useState('0.0');
+
+  useEffect(() => {
+    animVal.setValue(0);
+    Animated.timing(animVal, {
+      toValue: score,
+      duration: 900,
+      delay: 120,
+      useNativeDriver: false,
+    }).start();
+    const id = animVal.addListener(({ value }) => {
+      setDisplayScore(value.toFixed(1));
+    });
+    return () => animVal.removeListener(id);
+  }, [score]);
+
   return (
     <View style={[styles.scoreBadge, { backgroundColor: pal.badgeBg }]}>
-      <Text style={[styles.scoreBadgeText, { color: pal.badgeText }]}>{score.toFixed(1)}</Text>
+      <Text style={[styles.scoreBadgeText, { color: pal.badgeText }]}>{displayScore}</Text>
     </View>
   );
 }
@@ -292,7 +326,7 @@ export default function FeedScreen() {
   const [notifOpen, setNotifOpen] = useState(false);
 
   function handleAvatarLongPress() {
-    Alert.alert(
+    showAlert(
       currentUser?.name ?? 'Mi cuenta',
       'Opciones de cuenta',
       [
@@ -351,12 +385,13 @@ export default function FeedScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
       {/* Fixed glassmorphism header */}
-      <View style={styles.header}>
+      <BlurView intensity={70} tint="systemChromeMaterialLight" style={styles.header}>
         <View style={styles.headerRow}>
           <TouchableOpacity
             onPress={() => router.push(`/profile/${currentUser?.id}`)}
             onLongPress={handleAvatarLongPress}
             activeOpacity={0.7}
+            accessibilityLabel="Mi perfil"
           >
             {currentUser?.avatar ? (
               <Image source={{ uri: currentUser.avatar }} style={styles.headerAvatar} />
@@ -371,6 +406,7 @@ export default function FeedScreen() {
             activeOpacity={0.7}
             onPress={() => setNotifOpen(true)}
             style={{ position: 'relative', padding: 4 }}
+            accessibilityLabel={pendingRequestCount > 0 ? `${pendingRequestCount} notificaciones` : 'Notificaciones'}
           >
             <MaterialIcons
               name={pendingRequestCount > 0 ? 'notifications' : 'notifications-none'}
@@ -409,7 +445,7 @@ export default function FeedScreen() {
             {onlyMutual && <View style={styles.feedToggleUnderline} />}
           </TouchableOpacity>
         </View>
-      </View>
+      </BlurView>
 
       {/* "New post" realtime banner */}
       {hasNewPosts && (
@@ -465,31 +501,7 @@ export default function FeedScreen() {
         scrollEventThrottle={400}
       >
         {isLoading && posts.length === 0 && (
-          <View style={{ gap: 16, paddingTop: 8 }}>
-            {[1, 2].map((i) => (
-              <View key={i} style={[styles.card, { overflow: 'hidden' }]}>
-                {/* Header skeleton */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 }}>
-                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#e6e2db' }} />
-                  <View style={{ gap: 6, flex: 1 }}>
-                    <View style={{ height: 12, width: '40%', backgroundColor: '#e6e2db', borderRadius: 6 }} />
-                    <View style={{ height: 10, width: '25%', backgroundColor: '#f1ede6', borderRadius: 6 }} />
-                  </View>
-                  <View style={{ width: 44, height: 28, borderRadius: 14, backgroundColor: '#c7ef48', opacity: 0.3 }} />
-                </View>
-                {/* Image skeleton */}
-                <View style={{ aspectRatio: 1, backgroundColor: '#e6e2db' }} />
-                {/* Content skeleton */}
-                <View style={{ padding: 16, gap: 8 }}>
-                  <View style={{ height: 14, width: '70%', backgroundColor: '#e6e2db', borderRadius: 6 }} />
-                  <View style={{ height: 12, width: '50%', backgroundColor: '#f1ede6', borderRadius: 6 }} />
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
-                    {[1, 2, 3].map((j) => <View key={j} style={{ height: 28, width: 72, borderRadius: 10, backgroundColor: '#f7f3ec' }} />)}
-                  </View>
-                </View>
-              </View>
-            ))}
-          </View>
+          <FeedSkeletonList />
         )}
         {/* Error state */}
         {isError && posts.length === 0 && (
@@ -618,17 +630,61 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
     return `hace ${Math.floor(hrs / 24)}d`;
   };
 
-  const userImages = post.photos?.map((p: any) => p.photo_url) ?? [];
-  // Fall back to Google Places cover image when the user posted no photos
-  const images = userImages.length > 0
-    ? userImages
-    : post.restaurant.cover_image_url
-      ? [post.restaurant.cover_image_url]
-      : [];
+  // ── Build ordered carousel frames: restaurant photos → dish photos ──────
+  type Frame = {
+    url: string;
+    kind: 'restaurant' | 'dish';
+    dishName?: string;
+    highlighted?: boolean;
+  };
+
+  const restaurantPhotos = (post.photos ?? []).filter((p: any) => p.type === 'restaurant');
+  const dishPhotos = (post.photos ?? [])
+    .filter((p: any) => p.type === 'dish')
+    .map((p: any) => {
+      const dish = (post.dishes ?? []).find((d: any) => d.id === p.dish_id);
+      return {
+        url: p.photo_url as string,
+        kind: 'dish' as const,
+        dishName: dish?.name ?? '',
+        highlighted: dish?.highlighted ?? false,
+        position: dish?.position ?? 99,
+      };
+    })
+    .sort((a: any, b: any) => {
+      if (a.highlighted !== b.highlighted) return a.highlighted ? -1 : 1;
+      return a.position - b.position;
+    });
+
+  const frames: Frame[] = [
+    ...(restaurantPhotos.length > 0
+      ? restaurantPhotos.map((p: any) => ({ url: p.photo_url, kind: 'restaurant' as const }))
+      : post.restaurant?.cover_image_url
+        ? [{ url: post.restaurant.cover_image_url, kind: 'restaurant' as const }]
+        : []),
+    ...dishPhotos,
+  ];
+
   const [imgIndex, setImgIndex] = useState(0);
+  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    if (viewableItems.length > 0 && viewableItems[0].index != null) {
+      setImgIndex(viewableItems[0].index);
+    }
+  }).current;
   const [postSaved, setPostSaved] = useState(false);
   const [likeActive, setLikeActive] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
+
+  // Initialize reaction state from real data
+  useEffect(() => {
+    const reactions = (post as any).reactions ?? [];
+    const hungryReactions = reactions.filter((r: any) => r.emoji === 'hungry');
+    setLikeCount(hungryReactions.length);
+    const userReacted = hungryReactions.some((r: any) => r.user_id === currentUserId);
+    setLikeActive(userReacted);
+  }, [post, currentUserId]);
+
   const likeScale = useRef(new Animated.Value(1)).current;
   const { mutateAsync: toggleSavePost } = useSavePost(currentUserId);
   const { mutate: doToggleReaction } = useToggleReaction(post.id);
@@ -675,7 +731,13 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
   }
 
   return (
-    <View style={styles.card}>
+    <AnimatedCard
+      style={styles.card}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        router.push(`/visit/${post.id}`);
+      }}
+    >
       {/* Card header */}
       <View style={styles.cardHeader}>
         <TouchableOpacity
@@ -703,48 +765,83 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
         )}
       </View>
 
-      {/* Image carousel (only when photos exist) */}
-      {images.length > 0 ? (
+      {/* Image carousel — restaurant photos first, then dish photos */}
+      {frames.length > 0 ? (
         <View style={{ aspectRatio: 1, width: '100%', overflow: 'hidden' }}>
-          <TouchableOpacity
-            activeOpacity={0.92}
-            onPress={() => router.push(`/visit/${post.id}`)}
-            style={{ flex: 1 }}
-          >
-            <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}
-              onMomentumScrollEnd={(e) => setImgIndex(Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH))}>
-              {images.map((uri: string, i: number) => (
-                <View key={i} style={{ width: SCREEN_WIDTH - 32, aspectRatio: 1 }}>
-                  <Image source={{ uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                </View>
-              ))}
-            </ScrollView>
-            {/* Overlay info */}
-            <View style={[StyleSheet.absoluteFillObject, { justifyContent: 'flex-end', pointerEvents: 'none' }]}>
-              <LinearGradient colors={['transparent', 'rgba(3,36,23,0.45)', 'rgba(3,36,23,0.88)']} style={{ padding: 18, paddingBottom: images.length > 1 ? 32 : 18 }}>
-                {post.restaurant.neighborhood ? (
-                  <Text style={{ fontFamily: 'Manrope-ExtraBold', fontSize: 10, color: '#c7ef48', textTransform: 'uppercase', letterSpacing: 3, marginBottom: 4 }}>
-                    {post.restaurant.neighborhood}
-                  </Text>
-                ) : null}
-                <Text style={{ fontFamily: 'NotoSerif-BoldItalic', fontSize: 30, color: '#ffffff', lineHeight: 34 }} numberOfLines={2}>
-                  {getDisplayName(post.restaurant as any, 'post')}
-                </Text>
-                {post.restaurant.cuisine ? (
-                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
-                    <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
-                      <Text style={{ fontFamily: 'Manrope-Medium', fontSize: 11, color: 'rgba(255,255,255,0.9)' }}>{post.restaurant.cuisine}</Text>
-                    </View>
-                  </View>
-                ) : null}
-              </LinearGradient>
-            </View>
-          </TouchableOpacity>
+          <FlatList
+            data={frames}
+            horizontal
+            pagingEnabled
+            bounces={false}
+            showsHorizontalScrollIndicator={false}
+            decelerationRate="fast"
+            snapToAlignment="start"
+            getItemLayout={(_, index) => ({
+              length: SCREEN_WIDTH - 32,
+              offset: (SCREEN_WIDTH - 32) * index,
+              index,
+            })}
+            keyExtractor={(_, i) => String(i)}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={viewabilityConfig}
+            renderItem={({ item: frame }) => (
+              <View style={{ width: SCREEN_WIDTH - 32, aspectRatio: 1 }}>
+                <Image
+                  source={{ uri: frame.url }}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+                {/* Gradient overlay */}
+                <LinearGradient
+                  colors={['transparent', 'rgba(3,36,23,0.45)', 'rgba(3,36,23,0.88)']}
+                  style={[StyleSheet.absoluteFillObject, { justifyContent: 'flex-end', padding: 18, paddingBottom: frames.length > 1 ? 32 : 18 }]}
+                  pointerEvents="none"
+                >
+                  {frame.kind === 'restaurant' ? (
+                    <>
+                      {post.restaurant.neighborhood ? (
+                        <Text style={{ fontFamily: 'Manrope-ExtraBold', fontSize: 10, color: '#c7ef48', textTransform: 'uppercase', letterSpacing: 3, marginBottom: 4 }}>
+                          {post.restaurant.neighborhood}
+                        </Text>
+                      ) : null}
+                      <Text style={{ fontFamily: 'NotoSerif-BoldItalic', fontSize: 30, color: '#ffffff', lineHeight: 34 }} numberOfLines={2}>
+                        {getDisplayName(post.restaurant as any, 'post')}
+                      </Text>
+                      {post.restaurant.cuisine ? (
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                          <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
+                            <Text style={{ fontFamily: 'Manrope-Medium', fontSize: 11, color: 'rgba(255,255,255,0.9)' }}>{post.restaurant.cuisine}</Text>
+                          </View>
+                        </View>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      {frame.highlighted && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+                          <View style={{ backgroundColor: '#c7ef48', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
+                            <Text style={{ fontFamily: 'Manrope-ExtraBold', fontSize: 10, color: '#546b00', textTransform: 'uppercase', letterSpacing: 1.5 }}>
+                              ★ Destacado
+                            </Text>
+                          </View>
+                        </View>
+                      )}
+                      {frame.dishName ? (
+                        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 22, color: '#ffffff', lineHeight: 27 }} numberOfLines={2}>
+                          {frame.dishName}
+                        </Text>
+                      ) : null}
+                    </>
+                  )}
+                </LinearGradient>
+              </View>
+            )}
+          />
 
           {/* Pagination dots */}
-          {images.length > 1 && (
+          {frames.length > 1 && (
             <View style={[styles.dotsContainer, { position: 'absolute', bottom: 8, left: 0, right: 0, paddingVertical: 0 }]}>
-              {images.map((_: any, i: number) => (
+              {frames.map((_: any, i: number) => (
                 <View key={i} style={[styles.dot, i === imgIndex ? styles.dotActive : styles.dotInactive,
                   { width: i === imgIndex ? 16 : 6 }]} />
               ))}
@@ -780,6 +877,7 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
           activeOpacity={0.7}
           onPress={handleLike}
           disabled={!currentUserId || currentUserId === post.user.id}
+          accessibilityLabel={likeActive ? 'Quitar me gusta' : 'Me gusta'}
         >
           <Animated.View style={{ transform: [{ scale: likeScale }] }}>
             <MaterialIcons
@@ -799,6 +897,7 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
           onPress={handleBookmark}
           activeOpacity={0.7}
           style={[styles.saveBtn, postSaved && styles.saveBtnActive]}
+          accessibilityLabel={postSaved ? 'Guardado' : 'Guardar publicación'}
         >
           <MaterialIcons
             name={postSaved ? 'bookmark-added' : 'bookmark-add'}
@@ -870,7 +969,7 @@ function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post:
           </View>
         )}
       </TouchableOpacity>
-    </View>
+    </AnimatedCard>
   );
 }
 
@@ -881,7 +980,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 50,
-    backgroundColor: 'rgba(253,249,242,0.94)',
+    backgroundColor: 'rgba(253,249,242,0.60)',
+    overflow: 'hidden' as const,
     paddingTop: Platform.OS === 'ios' ? 52 : 32,
     paddingBottom: 0,
   },

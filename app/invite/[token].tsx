@@ -5,13 +5,13 @@ import {
   Image,
   ActivityIndicator,
   StyleSheet,
-  Alert,
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { getInvitation, claimInvitation, type InvitationRow } from '../../lib/api/users';
 import { useAppStore } from '../../store';
+import { showAlert } from '../../lib/utils/alerts';
 
 export default function InviteScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
@@ -51,13 +51,13 @@ export default function InviteScreen() {
       if (result === 'ok') {
         router.replace('/(tabs)/feed');
       } else if (result === 'already_claimed') {
-        Alert.alert(
+        showAlert(
           'Invitación ya usada',
           'Esta invitación ya fue reclamada por otra persona.',
           [{ text: 'Ir a fudi', onPress: () => router.replace('/(tabs)/feed') }]
         );
       } else {
-        Alert.alert('Error', 'No se pudo procesar la invitación. Inténtalo de nuevo.');
+        showAlert('Error', 'No se pudo procesar la invitación. Inténtalo de nuevo.');
       }
     } else {
       // Not logged in — save token and go to auth

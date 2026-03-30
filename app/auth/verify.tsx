@@ -5,11 +5,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  KeyboardAvoidingView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { showAlert } from '../../lib/utils/alerts';
 import { useState, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
@@ -88,7 +87,7 @@ export default function VerifyScreen() {
       const expired =
         error.message?.toLowerCase().includes('expired') ||
         error.message?.toLowerCase().includes('otp');
-      Alert.alert(
+      showAlert(
         expired ? 'Código caducado' : 'Código incorrecto',
         expired
           ? 'El código ha caducado (válido 10 min). Solicita uno nuevo.'
@@ -136,17 +135,14 @@ export default function VerifyScreen() {
       options: { shouldCreateUser: false },
     });
     if (error) {
-      Alert.alert('Error', error.message);
+      showAlert('Error', error.message);
     } else {
-      Alert.alert('Código reenviado', 'Revisa tu bandeja de entrada.');
+      showAlert('Código reenviado', 'Revisa tu bandeja de entrada.');
     }
   }
 
   return (
-    <KeyboardAvoidingView
-      style={s.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={s.root}>
       <View style={s.inner}>
         {/* Back */}
         <TouchableOpacity style={s.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
@@ -185,8 +181,6 @@ export default function VerifyScreen() {
                 textAlign="center"
                 autoFocus={i === 0}
                 editable={!loading}
-                autoComplete={i === 0 ? 'one-time-code' : undefined}
-                textContentType={i === 0 ? 'oneTimeCode' : undefined}
                 selectTextOnFocus
               />
             ))}
@@ -221,7 +215,7 @@ export default function VerifyScreen() {
           </Text>
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

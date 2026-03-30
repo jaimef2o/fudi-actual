@@ -31,7 +31,7 @@ export const CHAIN_CATALOG: ChainEntry[] = [
   { pattern: /timesburg/i,                   chainId: 'timesburg',            name: "Timesburg" },
   { pattern: /toro\s*burger/i,               chainId: 'toro-burger',          name: "TORO Burger Lounge" },
   { pattern: /\bberty.s\b/i,                 chainId: 'bertys',               name: "Berty's" },
-  { pattern: /\bhundreds\b/i,                chainId: 'hundreds',             name: "Hundreds" },
+  { pattern: /\bhundreds?\b/i,                chainId: 'hundred-burgers',      name: "Hundred Burgers" },
 
   // ── FAST FOOD — PIZZA ──
   { pattern: /telepizza/i,                   chainId: 'telepizza',            name: "Telepizza" },
@@ -70,6 +70,7 @@ export const CHAIN_CATALOG: ChainEntry[] = [
   { pattern: /la\s*mafia/i,                  chainId: 'la-mafia',             name: "La Mafia se sienta a la mesa" },
 
   // ── CASUAL DINING — TAPAS Y ESPAÑOL TRADICIONAL ──
+  { pattern: /monarracha/i,                  chainId: 'la-monarracha',        name: "La Monarracha" },
   { pattern: /\blateral\b/i,                 chainId: 'lateral',              name: "Lateral" },
   { pattern: /la\s*maruca/i,                 chainId: 'la-maruca',            name: "La Maruca" },
   { pattern: /volapi[eé]/i,                  chainId: 'taberna-volapie',      name: "Taberna del Volapié" },
@@ -219,9 +220,12 @@ export async function getRelevantRestaurantIds(restaurantId: string): Promise<Ch
 
     // Look up display name from catalog
     const entry = CHAIN_CATALOG.find(c => c.chainId === restaurant.chain_name);
+    // Also try regex match on the restaurant name as fallback
+    const regexMatch = !entry ? matchChain(restaurant.name) : null;
+    const displayName = entry?.name ?? regexMatch?.name ?? restaurant.name;
     return {
       ids,
-      chainName: entry?.name ?? restaurant.chain_name,
+      chainName: displayName,
       chainId: restaurant.chain_name,
     };
   }

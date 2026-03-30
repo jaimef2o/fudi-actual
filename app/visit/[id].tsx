@@ -2,30 +2,34 @@ import {
   View,
   Text,
   ScrollView,
+  FlatList,
   Image,
   TouchableOpacity,
   StyleSheet,
   Dimensions,
   Platform,
   ActivityIndicator,
-  Alert,
   Share,
+  ViewToken,
+  TextInput,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
+import { showAlert } from '../../lib/utils/alerts';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useState } from 'react';
-import { useVisit, useBookmark, useSavePost, useDeleteVisit } from '../../lib/hooks/useVisit';
+import { useState, useRef, useCallback, useMemo } from 'react';
+import { useVisit, useBookmark, useSavePost, useDeleteVisit, useSavedRestaurants } from '../../lib/hooks/useVisit';
 import { useVisitDishes } from '../../lib/hooks/useDishes';
 import { useAppStore } from '../../store';
 import { scorePalette } from '../../lib/sentimentColors';
 import { InfoTag } from '../../components/InfoTag';
 import { getDisplayName } from '../../lib/utils/restaurantName';
 import * as Haptics from 'expo-haptics';
+import { useComments, useAddComment } from '../../lib/hooks/useComments';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const HEADER_HEIGHT = Platform.OS === 'ios' ? 108 : 88;
 const CAROUSEL_HEIGHT = SCREEN_HEIGHT * 0.6;
-
 
 function formatSpend(spend: string | null | undefined): string | null {
   if (!spend) return null;
@@ -43,53 +47,84 @@ function timeAgo(dateStr: string) {
   return `hace ${Math.floor(days / 30)} mes${Math.floor(days / 30) > 1 ? 'es' : ''}`;
 }
 
+type CarouselFrame = {
+  image: string;
+  type: 'restaurant' | 'dish';
+  title: string;
+  subtitle: string;
+  highlighted: boolean;
+};
+
 export default function VisitScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [activeFrame, setActiveFrame] = useState(0);
-  const [restaurantSaved, setRestaurantSaved] = useState(false);
   const [postSaved, setPostSaved] = useState(false);
   const { data: visit, isLoading } = useVisit(id);
   const { data: visitDishes = [] } = useVisitDishes(id);
   const currentUser = useAppStore((s) => s.currentUser);
   const showToast   = useAppStore((s) => s.showToast);
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
+  const { data: savedRestaurants } = useSavedRestaurants(currentUser?.id);
+  const restaurantId = (visit as any)?.restaurant?.id as string | undefined;
+  // Derive saved state from real data; pendingOverride gives instant optimistic feedback
+  const restaurantSavedFromDB = useMemo(
+    () => (savedRestaurants ?? []).some((r: any) => r.restaurant?.id === restaurantId),
+    [savedRestaurants, restaurantId]
+  );
+  const [pendingRestaurantSaved, setPendingRestaurantSaved] = useState<boolean | null>(null);
+  const restaurantSaved = pendingRestaurantSaved !== null ? pendingRestaurantSaved : restaurantSavedFromDB;
   const { mutateAsync: toggleSavePost } = useSavePost(currentUser?.id);
   const { mutateAsync: deleteVisit, isPending: isDeleting } = useDeleteVisit();
+  const { data: comments } = useComments(id as string);
+  const { mutateAsync: postComment, isPending: commentPosting } = useAddComment(id as string);
+  const [commentText, setCommentText] = useState('');
 
   const isOwnPost = !!currentUser?.id && (visit as any)?.user_id === currentUser.id;
 
+  // Stable refs for FlatList viewability (must not be recreated on re-render)
+  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      if (viewableItems.length > 0 && viewableItems[0].index != null) {
+        setActiveFrame(viewableItems[0].index);
+      }
+    }
+  ).current;
+
   async function handleDelete() {
-    Alert.alert(
+    async function doDelete() {
+      try {
+        await deleteVisit({ visitId: id!, userId: currentUser!.id });
+        router.back();
+      } catch {
+        showAlert('Error', 'No se pudo eliminar la publicación. Inténtalo de nuevo.');
+      }
+    }
+
+    showAlert(
       'Eliminar publicación',
       '¿Seguro que quieres eliminar esta visita? Esta acción no se puede deshacer.',
       [
         { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteVisit({ visitId: id!, userId: currentUser!.id });
-              router.back();
-            } catch {
-              Alert.alert('Error', 'No se pudo eliminar la publicación. Inténtalo de nuevo.');
-            }
-          },
-        },
+        { text: 'Eliminar', style: 'destructive', onPress: doDelete },
       ]
     );
   }
 
   async function handleSaveRestaurant() {
-    const restaurantId = (visit as any)?.restaurant?.id;
     if (!currentUser?.id || !restaurantId) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const next = !restaurantSaved;
-    setRestaurantSaved(next);
+    setPendingRestaurantSaved(next);
     try {
       await toggleBookmark({ restaurantId, save: next });
-      if (next) showToast('Restaurante añadido a guardados');
-    } catch { setRestaurantSaved(!next); }
+      showToast(next ? 'Restaurante guardado ✓' : 'Restaurante eliminado de guardados');
+    } catch {
+      setPendingRestaurantSaved(!next);
+      showToast('Error al guardar. Inténtalo de nuevo.');
+    } finally {
+      setPendingRestaurantSaved(null);
+    }
   }
 
   async function handleSavePost() {
@@ -121,6 +156,7 @@ export default function VisitScreen() {
     }
   }
 
+  // ─── Build carousel frames ──────────────────────────────────────────────────
   // Restaurant photos — all of them, cover as fallback if none
   const rawRestaurantPhotos: string[] = (visit as any)?.photos
     ?.filter((p: any) => p.type === 'restaurant' && p.photo_url)
@@ -146,8 +182,7 @@ export default function VisitScreen() {
       return a.position - b.position;
     });
 
-  // Build carousel frames: all restaurant photos first, then dish photos
-  const realFrames = [
+  const frames: CarouselFrame[] = [
     ...restaurantImages.map((img) => ({
       image: img,
       type: 'restaurant' as const,
@@ -164,28 +199,7 @@ export default function VisitScreen() {
     })),
   ].filter((f) => f.image);
 
-  const data = {
-    restaurantId: (visit as any)?.restaurant?.id ?? '',
-    restaurantName: resolvedRestaurantName,
-    restaurantLocation: (visit as any)?.restaurant?.neighborhood ?? '',
-    user: {
-      name: (visit as any)?.user?.name ?? '',
-      avatar: (visit as any)?.user?.avatar_url ?? null,
-      publishedAt: (visit as any)?.visited_at ? timeAgo((visit as any).visited_at) : '',
-    },
-    score: (visit as any)?.rank_score ?? null,
-    sentiment: (visit as any)?.sentiment ?? null,
-    quote: (visit as any)?.note ?? '',
-    frames: realFrames,
-    // visitDishes comes from useVisitDishes — direct query, bypasses nested join issues
-    dishes: visitDishes
-      .filter((d) => d.name?.trim())
-      .map((d) => ({
-        name: d.name,
-        highlighted: d.highlighted ?? false,
-      })),
-  };
-
+  // ─── Render ──────────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: '#fdf9f2', justifyContent: 'center', alignItems: 'center', gap: 16 }}>
@@ -215,33 +229,50 @@ export default function VisitScreen() {
     );
   }
 
+  const dishes = visitDishes
+    .filter((d) => d.name?.trim())
+    .map((d) => ({
+      name: d.name,
+      highlighted: d.highlighted ?? false,
+    }));
+
   return (
     <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
-      {/* Glassmorphism header */}
+      {/* Absolute glassmorphism header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
           <MaterialIcons name="arrow-back" size={24} color="#032417" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Publicación</Text>
-        <TouchableOpacity style={styles.headerBtn} onPress={isOwnPost ? () => router.push(`/edit-visit/${id}`) : handleShare}>
+        <TouchableOpacity
+          style={styles.headerBtn}
+          onPress={isOwnPost ? () => router.push(`/edit-visit/${id}`) : handleShare}
+        >
           <MaterialIcons name={isOwnPost ? 'edit' : 'ios-share'} size={22} color="#032417" />
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Hero carousel */}
-        <View style={[styles.carousel, { marginTop: Platform.OS === 'ios' ? 108 : 64 }]}>
-          <ScrollView
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: HEADER_HEIGHT }}>
+      {/* ── Carousel ── */}
+      <View style={styles.carouselContainer}>
+        {frames.length > 0 ? (
+          <FlatList<CarouselFrame>
+            data={frames}
+            keyExtractor={(_, i) => String(i)}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
-            onMomentumScrollEnd={(e) => {
-              const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
-              setActiveFrame(Math.max(0, Math.min(idx, data.frames.length - 1)));
-            }}
-          >
-            {data.frames.map((frame, i) => (
-              <View key={i} style={styles.carouselFrame}>
+            bounces={false}
+            decelerationRate="fast"
+            getItemLayout={(_, index) => ({
+              length: SCREEN_WIDTH,
+              offset: SCREEN_WIDTH * index,
+              index,
+            })}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={viewabilityConfig}
+            renderItem={({ item: frame }) => (
+              <View style={styles.carouselFrame}>
                 <Image
                   source={{ uri: frame.image }}
                   style={StyleSheet.absoluteFillObject}
@@ -252,21 +283,22 @@ export default function VisitScreen() {
                   style={styles.frameGradient}
                 />
                 <View style={styles.frameContent}>
-                  {frame.type === 'restaurant' && (
+                  {frame.type === 'restaurant' ? (
                     <>
                       <TouchableOpacity
                         activeOpacity={0.8}
-                        onPress={() => router.push(`/restaurant/${data.restaurantId}`)}
+                        onPress={() => router.push(`/restaurant/${(visit as any)?.restaurant?.id}`)}
                       >
                         <View style={styles.restaurantNameRow}>
                           <Text style={styles.frameTitleLarge}>{frame.title}</Text>
                           <MaterialIcons name="arrow-forward-ios" size={20} color="rgba(255,255,255,0.7)" style={{ marginTop: 4 }} />
                         </View>
                       </TouchableOpacity>
-                      <Text style={styles.frameSubtitleUppercase}>{frame.subtitle}</Text>
+                      {!!frame.subtitle && (
+                        <Text style={styles.frameSubtitleUppercase}>{frame.subtitle}</Text>
+                      )}
                     </>
-                  )}
-                  {frame.type === 'dish' && (
+                  ) : (
                     <>
                       {frame.highlighted && (
                         <View style={styles.frameBadge}>
@@ -278,19 +310,28 @@ export default function VisitScreen() {
                   )}
                 </View>
               </View>
-            ))}
-          </ScrollView>
+            )}
+          />
+        ) : (
+          // Fallback when no images at all
+          <View style={[styles.carouselFrame, { backgroundColor: '#1a3a2b', justifyContent: 'flex-end', padding: 32 }]}>
+            <Text style={styles.frameTitleLarge}>{resolvedRestaurantName}</Text>
+          </View>
+        )}
 
-          {/* Page counter */}
+        {/* Page counter */}
+        {frames.length > 1 && (
           <View style={styles.counter}>
             <Text style={styles.counterText}>
-              {activeFrame + 1} / {data.frames.length}
+              {activeFrame + 1} / {frames.length}
             </Text>
           </View>
+        )}
 
-          {/* Progress indicators */}
+        {/* Progress bar indicators */}
+        {frames.length > 1 && (
           <View style={styles.progressBars}>
-            {data.frames.map((_, i) => (
+            {frames.map((_, i) => (
               <View
                 key={i}
                 style={[
@@ -300,29 +341,32 @@ export default function VisitScreen() {
               />
             ))}
           </View>
+        )}
 
-          {/* Scroll hint */}
-          {activeFrame < data.frames.length - 1 && (
-            <View style={styles.scrollHint}>
-              <MaterialIcons name="chevron-right" size={28} color="rgba(255,255,255,0.7)" />
-            </View>
-          )}
-        </View>
+        {/* Scroll hint arrow */}
+        {activeFrame < frames.length - 1 && (
+          <View style={styles.scrollHint}>
+            <MaterialIcons name="chevron-right" size={28} color="rgba(255,255,255,0.7)" />
+          </View>
+        )}
+      </View>
 
+      {/* ── Content below carousel ── */}
+      <View>
         {/* Metadata */}
         <View style={styles.metaSection}>
           <View style={styles.metaRow}>
-            {data.user.avatar ? (
-            <Image source={{ uri: data.user.avatar }} style={styles.userAvatar} />
-          ) : (
-            <View style={[styles.userAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-              <MaterialIcons name="person" size={22} color="#727973" />
-            </View>
-          )}
+            {(visit as any)?.user?.avatar_url ? (
+              <Image source={{ uri: (visit as any).user.avatar_url }} style={styles.userAvatar} />
+            ) : (
+              <View style={[styles.userAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
+                <MaterialIcons name="person" size={22} color="#727973" />
+              </View>
+            )}
             <View style={{ flex: 1 }}>
-              <Text style={styles.userName}>{data.user.name}</Text>
+              <Text style={styles.userName}>{(visit as any)?.user?.name ?? ''}</Text>
               <Text style={styles.publishedAt}>
-                PUBLICADO {data.user.publishedAt.toUpperCase()}
+                PUBLICADO {(visit as any)?.visited_at ? timeAgo((visit as any).visited_at).toUpperCase() : ''}
               </Text>
               {(visit as any)?.spend_per_person ? (
                 <View style={{ marginTop: 4 }}>
@@ -330,11 +374,11 @@ export default function VisitScreen() {
                 </View>
               ) : null}
             </View>
-            {data.score != null && (() => {
-              const pal = scorePalette(data.score);
+            {(visit as any)?.rank_score != null && (() => {
+              const pal = scorePalette((visit as any).rank_score);
               return (
                 <View style={[styles.scoreBadge, { backgroundColor: pal.badgeBg }]}>
-                  <Text style={[styles.scoreNumber, { color: pal.badgeText }]}>{data.score.toFixed(1)}</Text>
+                  <Text style={[styles.scoreNumber, { color: pal.badgeText }]}>{((visit as any).rank_score as number).toFixed(1)}</Text>
                   <Text style={[styles.scoreLabel, { color: pal.badgeText, opacity: 0.75 }]}>Puntuación</Text>
                 </View>
               );
@@ -345,11 +389,11 @@ export default function VisitScreen() {
           <TouchableOpacity
             style={styles.restaurantLink}
             activeOpacity={0.7}
-            onPress={() => router.push(`/restaurant/${data.restaurantId}`)}
+            onPress={() => router.push(`/restaurant/${(visit as any)?.restaurant?.id}`)}
           >
             <MaterialIcons name="restaurant" size={16} color="#032417" />
             <View style={{ flex: 1 }}>
-              <Text style={styles.restaurantLinkText}>{data.restaurantName}</Text>
+              <Text style={styles.restaurantLinkText}>{resolvedRestaurantName}</Text>
               {(() => {
                 const cuisine = (visit as any)?.restaurant?.cuisine as string | null;
                 const price = (visit as any)?.restaurant?.price_level as string | null;
@@ -365,11 +409,13 @@ export default function VisitScreen() {
           </TouchableOpacity>
 
           {/* Quote */}
-          <Text style={styles.quoteText}>{data.quote}</Text>
+          {!!(visit as any)?.note && (
+            <Text style={styles.quoteText}>{(visit as any).note}</Text>
+          )}
         </View>
 
         {/* Comanda */}
-        {data.dishes.length > 0 && (
+        {dishes.length > 0 && (
           <View style={styles.comandaSection}>
             <View style={styles.comandaHeader}>
               <View style={styles.comandaLine} />
@@ -377,7 +423,7 @@ export default function VisitScreen() {
             </View>
 
             <View style={styles.dishesList}>
-              {data.dishes.map((dish: any, i: number) => (
+              {dishes.map((dish: any, i: number) => (
                 <View key={i} style={styles.dishItem}>
                   {dish.highlighted
                     ? <Text style={styles.dishStar}>★</Text>
@@ -393,40 +439,41 @@ export default function VisitScreen() {
         )}
 
         {/* Action buttons */}
-        <View style={styles.actionRow}>
-          {/* Save post — bookmark */}
-          <TouchableOpacity
-            style={[styles.actionBtn, postSaved && styles.actionBtnActive]}
-            activeOpacity={0.8}
-            onPress={handleSavePost}
-          >
-            <MaterialIcons
-              name={postSaved ? 'bookmark' : 'bookmark-border'}
-              size={18}
-              color={postSaved ? '#546b00' : '#032417'}
-            />
-            <Text style={[styles.actionBtnText, postSaved && styles.actionBtnTextActive]}>
-              {postSaved ? 'Guardado' : 'Guardar'}
-            </Text>
-          </TouchableOpacity>
+        <View style={styles.actionsContainer}>
+          {/* Primary row — save actions, always visible */}
+          <View style={styles.actionRowPrimary}>
+            <TouchableOpacity
+              style={[styles.actionBtnPrimary, postSaved && styles.actionBtnPrimaryActive]}
+              activeOpacity={0.8}
+              onPress={handleSavePost}
+            >
+              <MaterialIcons
+                name={postSaved ? 'bookmark' : 'bookmark-border'}
+                size={20}
+                color={postSaved ? '#546b00' : '#032417'}
+              />
+              <Text style={[styles.actionBtnPrimaryText, postSaved && styles.actionBtnPrimaryTextActive]}>
+                {postSaved ? 'Post guardado' : 'Guardar post'}
+              </Text>
+            </TouchableOpacity>
 
-          {/* Save restaurant — star */}
-          <TouchableOpacity
-            style={[styles.actionBtn, restaurantSaved && styles.actionBtnStar]}
-            activeOpacity={0.8}
-            onPress={handleSaveRestaurant}
-          >
-            <MaterialIcons
-              name={restaurantSaved ? 'star' : 'star-border'}
-              size={18}
-              color={restaurantSaved ? '#546b00' : '#032417'}
-            />
-            <Text style={[styles.actionBtnText, restaurantSaved && styles.actionBtnTextStar]}>
-              {restaurantSaved ? 'En lista' : 'Guardar'}
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtnPrimary, restaurantSaved && styles.actionBtnPrimaryActive]}
+              activeOpacity={0.8}
+              onPress={handleSaveRestaurant}
+            >
+              <MaterialIcons
+                name={restaurantSaved ? 'star' : 'star-border'}
+                size={20}
+                color={restaurantSaved ? '#546b00' : '#032417'}
+              />
+              <Text style={[styles.actionBtnPrimaryText, restaurantSaved && styles.actionBtnPrimaryTextActive]}>
+                {restaurantSaved ? 'En mi lista' : 'Guardar lugar'}
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-          {/* Edit — only own posts */}
+          {/* Secondary row — own post actions */}
           {isOwnPost && (
             <TouchableOpacity
               style={styles.actionBtnEdit}
@@ -434,29 +481,134 @@ export default function VisitScreen() {
               onPress={() => router.push(`/edit-visit/${id}`)}
             >
               <MaterialIcons name="edit" size={18} color="#032417" />
-              <Text style={styles.actionBtnEditText}>Editar</Text>
+              <Text style={styles.actionBtnEditText}>Editar publicación</Text>
             </TouchableOpacity>
           )}
 
-          {/* Delete — only own posts */}
+          {/* Destructive — text-only, minimal weight */}
           {isOwnPost && (
             <TouchableOpacity
               style={styles.actionBtnDelete}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
               onPress={handleDelete}
               disabled={isDeleting}
             >
-              <MaterialIcons name="delete-outline" size={18} color="#ba1a1a" />
+              <MaterialIcons name="delete-outline" size={16} color="#ba1a1a" />
               <Text style={styles.actionBtnDeleteText}>
-                {isDeleting ? 'Eliminando…' : 'Eliminar'}
+                {isDeleting ? 'Eliminando…' : 'Eliminar publicación'}
               </Text>
             </TouchableOpacity>
           )}
         </View>
 
-        <View style={{ height: 48 }} />
-      </ScrollView>
+        {/* Comments Section */}
+        <View style={{
+          marginTop: 24,
+          paddingHorizontal: 20,
+          paddingBottom: 24,
+          gap: 16,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ width: 3, height: 14, backgroundColor: '#c7ef48', borderRadius: 2 }} />
+            <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 10, color: '#727973', textTransform: 'uppercase', letterSpacing: 3 }}>
+              COMENTARIOS {comments?.length ? `(${comments.length})` : ''}
+            </Text>
+          </View>
 
+          {/* Comment input */}
+          {currentUser?.id && (
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              backgroundColor: '#f7f3ec',
+              borderRadius: 16,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+            }}>
+              <TextInput
+                style={{
+                  flex: 1,
+                  fontFamily: 'Manrope-Regular',
+                  fontSize: 14,
+                  color: '#1c1c18',
+                  maxHeight: 80,
+                }}
+                placeholder="Escribe un comentario..."
+                placeholderTextColor="#c1c8c2"
+                value={commentText}
+                onChangeText={setCommentText}
+                multiline
+              />
+              <TouchableOpacity
+                onPress={async () => {
+                  if (!commentText.trim() || !currentUser?.id) return;
+                  await postComment({ userId: currentUser.id, text: commentText.trim() });
+                  setCommentText('');
+                }}
+                disabled={commentPosting || !commentText.trim()}
+                activeOpacity={0.7}
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  backgroundColor: commentText.trim() ? '#032417' : '#e6e2db',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {commentPosting ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <MaterialIcons name="send" size={16} color={commentText.trim() ? '#ffffff' : '#a0a6a1'} />
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Comments list */}
+          {(comments ?? []).map((c: any) => (
+            <View key={c.id} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
+              <TouchableOpacity onPress={() => router.push(`/profile/${c.user.id}`)}>
+                {c.user.avatar_url ? (
+                  <Image source={{ uri: c.user.avatar_url }} style={{ width: 32, height: 32, borderRadius: 16 }} />
+                ) : (
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }}>
+                    <MaterialIcons name="person" size={16} color="#727973" />
+                  </View>
+                )}
+              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 13, color: '#032417' }}>
+                  {c.user.name}
+                  <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#424844' }}>
+                    {'  '}{c.text}
+                  </Text>
+                </Text>
+                <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 11, color: '#c1c8c2', marginTop: 3 }}>
+                  {(() => {
+                    const diff = Date.now() - new Date(c.created_at).getTime();
+                    const mins = Math.floor(diff / 60000);
+                    if (mins < 60) return `hace ${mins}m`;
+                    const hrs = Math.floor(mins / 60);
+                    if (hrs < 24) return `hace ${hrs}h`;
+                    return `hace ${Math.floor(hrs / 24)}d`;
+                  })()}
+                </Text>
+              </View>
+            </View>
+          ))}
+
+          {(!comments || comments.length === 0) && (
+            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#c1c8c2', textAlign: 'center', paddingVertical: 8 }}>
+              Sé el primero en comentar
+            </Text>
+          )}
+        </View>
+
+        <View style={{ height: 48 }} />
+      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -468,7 +620,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 50,
-    height: Platform.OS === 'ios' ? 108 : 88,
+    height: HEADER_HEIGHT,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
@@ -486,7 +638,7 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  carousel: {
+  carouselContainer: {
     height: CAROUSEL_HEIGHT,
     position: 'relative',
   },
@@ -545,12 +697,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     lineHeight: 36,
   },
-  frameSubtitleItalic: {
-    fontFamily: 'NotoSerif-Italic',
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.80)',
-    marginTop: 2,
-  },
   counter: {
     position: 'absolute',
     top: 16,
@@ -595,6 +741,11 @@ const styles = StyleSheet.create({
     top: '50%',
     marginTop: -14,
     opacity: 0.7,
+  },
+  restaurantNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   metaSection: {
     padding: 24,
@@ -644,11 +795,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  restaurantNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   restaurantLink: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -663,17 +809,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
     color: '#032417',
-  },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    marginTop: 2,
-  },
-  locationText: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 11,
-    color: '#727973',
   },
   quoteText: {
     fontFamily: 'NotoSerif-Italic',
@@ -723,9 +858,6 @@ const styles = StyleSheet.create({
     width: 18,
     textAlign: 'center',
   },
-  dishStarGap: {
-    width: 18,
-  },
   dishIconWrap: {
     width: 18,
     alignItems: 'center',
@@ -740,12 +872,65 @@ const styles = StyleSheet.create({
     color: '#032417',
     fontFamily: 'NotoSerif-Bold',
   },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 12,
+  actionsContainer: {
     paddingHorizontal: 24,
     paddingTop: 24,
+    gap: 10,
   },
+  actionRowPrimary: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionBtnPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    backgroundColor: '#f1ede6',
+  },
+  actionBtnPrimaryActive: {
+    backgroundColor: '#c7ef48',
+  },
+  actionBtnPrimaryText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 13,
+    color: '#032417',
+  },
+  actionBtnPrimaryTextActive: {
+    color: '#546b00',
+  },
+  actionBtnEdit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 18,
+    backgroundColor: '#f7f3ec',
+  },
+  actionBtnEditText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 14,
+    color: '#032417',
+  },
+  actionBtnDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+  },
+  actionBtnDeleteText: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 13,
+    color: '#ba1a1a',
+  },
+  // legacy aliases (unused but kept for safety)
   actionBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -757,54 +942,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#f1ede6',
   },
-  actionBtnActive: {
-    backgroundColor: '#c7ef48',
-  },
-  actionBtnFav: {
-    backgroundColor: '#fff0f0',
-  },
-  actionBtnStar: {
-    backgroundColor: '#c7ef48',
-  },
-  actionBtnTextStar: {
-    color: '#546b00',
-  },
-  actionBtnEdit: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    backgroundColor: '#f1ede6',
-  },
-  actionBtnEditText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 13,
-    color: '#032417',
-  },
-  actionBtnDelete: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    backgroundColor: '#fff0f0',
-  },
-  actionBtnDeleteText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 13,
-    color: '#ba1a1a',
-  },
-  actionBtnText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 13,
-    color: '#032417',
-  },
-  actionBtnTextActive: {
-    color: '#546b00',
-  },
+  actionBtnActive: { backgroundColor: '#c7ef48' },
+  actionBtnStar: { backgroundColor: '#c7ef48' },
+  actionBtnTextStar: { color: '#546b00' },
+  actionBtnText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#032417' },
+  actionBtnTextActive: { color: '#546b00' },
 });

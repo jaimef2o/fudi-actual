@@ -8,11 +8,11 @@ import {
   Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
-  Alert,
   Image,
   Keyboard,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { showAlert } from '../../lib/utils/alerts';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef } from 'react';
 import { useVisit } from '../../lib/hooks/useVisit';
@@ -117,7 +117,7 @@ export default function EditVisitScreen() {
   async function addNewPhoto() {
     const totalPhotos = existingPhotos.length + newPhotos.length;
     if (totalPhotos >= 5) {
-      Alert.alert('Máximo de fotos', 'Puedes tener hasta 5 fotos por visita.');
+      showAlert('Máximo de fotos', 'Puedes tener hasta 5 fotos por visita.');
       return;
     }
     const uri = await pickImage({ aspect: [4, 3], allowsEditing: true, quality: 0.8 });
@@ -178,7 +178,7 @@ export default function EditVisitScreen() {
       router.back();
     } catch (e: any) {
       setUploading(false);
-      Alert.alert('Error', e?.message ?? 'No se pudo guardar. Inténtalo de nuevo.');
+      showAlert('Error', e?.message ?? 'No se pudo guardar. Inténtalo de nuevo.');
     }
   }
 
@@ -214,7 +214,7 @@ export default function EditVisitScreen() {
         <TouchableOpacity
           style={s.headerBtn}
           onPress={() => {
-            Alert.alert(
+            showAlert(
               'Descartar cambios',
               '¿Seguro que quieres salir sin guardar?',
               [
@@ -245,6 +245,7 @@ export default function EditVisitScreen() {
         contentContainerStyle={s.container}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
       >
         {/* Restaurant (locked) */}
         <View style={s.section}>

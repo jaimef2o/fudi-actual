@@ -21,6 +21,7 @@ import { useAppStore } from '../store';
 import { useUserRanking } from '../lib/hooks/useVisit';
 import { sentimentPalette } from '../lib/sentimentColors';
 import { getDisplayName } from '../lib/utils/restaurantName';
+import { extractPriceLabel } from '../lib/api/places';
 
 function MiniCircularScore({ score, sentiment }: { score: number; sentiment?: string | null }) {
   const radius = 18;
@@ -91,7 +92,7 @@ export default function RankingScreen() {
     neighborhood: (v.restaurant as any).neighborhood as string | null,
     city: (v.restaurant as any).city as string | null,
     cuisine: (v.restaurant as any).cuisine as string | null,
-    price: (v.restaurant as any).price_level as string | null,
+    price: extractPriceLabel((v.restaurant as any).price_level) ?? (v.restaurant as any).price_level as string | null,
     score: v.rank_score ?? 0,
     image: (v.restaurant as any).cover_image_url as string | null,
     sentiment: v.sentiment,

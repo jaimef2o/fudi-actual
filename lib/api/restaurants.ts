@@ -2,7 +2,7 @@
 import { supabase } from '../supabase';
 import type { RestaurantRow } from '../database.types';
 import { matchChain } from '../chains';
-import { extractCuisineType, extractPriceLabel } from './places';
+import { extractCuisineType } from './places';
 
 // ─── Restaurant ─────────────────────────────────────────────────────────────
 
@@ -42,13 +42,18 @@ export async function upsertRestaurant(restaurant: {
     .maybeSingle();
 
   if (existing) {
-    // Backfill chain_name if missing (CHAIN_CATALOG v2)
+    // Backfill missing fields on existing restaurants
+    const updates: Record<string, any> = {};
     if (!existing.chain_name) {
       const match = matchChain(existing.name);
-      if (match) {
-        await supabase.from('restaurants').update({ chain_name: match.chainId }).eq('id', existing.id);
-        return { ...existing, chain_name: match.chainId } as RestaurantRow;
-      }
+      if (match) updates.chain_name = match.chainId;
+    }
+    if (!existing.cover_image_url && restaurant.cover_image_url) {
+      updates.cover_image_url = restaurant.cover_image_url;
+    }
+    if (Object.keys(updates).length > 0) {
+      await supabase.from('restaurants').update(updates).eq('id', existing.id);
+      return { ...existing, ...updates } as RestaurantRow;
     }
     return existing as RestaurantRow;
   }
@@ -57,13 +62,11 @@ export async function upsertRestaurant(restaurant: {
   const match = matchChain(restaurant.name);
   const chain_name = match?.chainId ?? null;
   const cuisine = extractCuisineType(restaurant.google_types ?? []);
-  const price_display = extractPriceLabel(restaurant.price_level ?? null);
-
-  // 3. Insert — save cuisine as text label, price as € symbol string
-  const { google_types, price_level, ...rest } = restaurant;
+  // 3. Insert — save cuisine as text label, keep price_level as integer (1–4)
+  const { google_types, ...rest } = restaurant;
   const { data, error } = await supabase
     .from('restaurants')
-    .insert({ ...rest, chain_name, cuisine, price_level: price_display } as any)
+    .insert({ ...rest, chain_name, cuisine } as any)
     .select()
     .single();
 
@@ -177,7 +180,10 @@ export async function getDiscoverRestaurants(
     q = q.or(`name.ilike.%${filters.search.trim()}%,neighborhood.ilike.%${filters.search.trim()}%`);
   }
   if (filters.prices && filters.prices.length > 0) {
-    q = q.in('price_level', filters.prices);
+    // UI sends '€','€€',etc. — convert to integers for the DB column
+    const symbolToInt: Record<string, number> = { '€': 1, '€€': 2, '€€€': 3, '€€€€': 4 };
+    const priceInts = filters.prices.map((p) => symbolToInt[p] ?? parseInt(p, 10)).filter((n) => !isNaN(n));
+    if (priceInts.length > 0) q = q.in('price_level', priceInts);
   }
 
   const { data: restaurants } = await q;

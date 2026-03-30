@@ -6,13 +6,13 @@ import {
   TextInput,
   StyleSheet,
   Platform,
-  Alert,
   Linking,
   Modal,
   KeyboardAvoidingView,
   ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
+import { showAlert } from '../lib/utils/alerts';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
@@ -282,7 +282,7 @@ export default function SettingsScreen() {
       await updateProfile({ [field]: value });
       setEditModal(null);
     } catch {
-      Alert.alert('Error', 'No se pudo guardar. Inténtalo de nuevo.');
+      showAlert('Error', 'No se pudo guardar. Inténtalo de nuevo.');
     } finally {
       setSavingField(false);
     }
@@ -294,36 +294,33 @@ export default function SettingsScreen() {
       await updateProfile({ city });
       setCityModalOpen(false);
     } catch {
-      Alert.alert('Error', 'No se pudo guardar. Inténtalo de nuevo.');
+      showAlert('Error', 'No se pudo guardar. Inténtalo de nuevo.');
     } finally {
       setSavingField(false);
     }
   }
 
   async function handleLogout() {
-    Alert.alert(
+    async function doLogout() {
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        showAlert('Error', 'No se pudo cerrar sesión. Inténtalo de nuevo.');
+      }
+    }
+
+    showAlert(
       'Cerrar sesión',
       '¿Seguro que quieres salir?',
       [
         { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Cerrar sesión',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await supabase.auth.signOut();
-              // onAuthStateChange in _layout.tsx handles navigation reset
-            } catch {
-              Alert.alert('Error', 'No se pudo cerrar sesión. Inténtalo de nuevo.');
-            }
-          },
-        },
+        { text: 'Cerrar sesión', style: 'destructive', onPress: doLogout },
       ]
     );
   }
 
   async function handleDeleteAccount() {
-    Alert.alert(
+    showAlert(
       'Eliminar cuenta',
       'Esta acción es permanente y no se puede deshacer. Todos tus datos serán eliminados.',
       [
@@ -332,7 +329,7 @@ export default function SettingsScreen() {
           text: 'Eliminar cuenta',
           style: 'destructive',
           onPress: () => {
-            Alert.alert('Próximamente', 'Para eliminar tu cuenta, escríbenos a hola@fudi.app y lo gestionamos de inmediato.');
+            showAlert('Próximamente', 'Para eliminar tu cuenta, escríbenos a hola@fudi.app y lo gestionamos de inmediato.');
           },
         },
       ]

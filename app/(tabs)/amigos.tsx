@@ -9,9 +9,9 @@ import {
   Platform,
   Modal,
   ActivityIndicator,
-  Alert,
   Share,
 } from 'react-native';
+import { showAlert } from '../../lib/utils/alerts';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState, useRef } from 'react';
@@ -62,7 +62,7 @@ function SearchResultCard({ user, currentUserId }: { user: any; currentUserId: s
     try {
       if (isConnected) {
         // Confirm unfollow
-        Alert.alert(
+        showAlert(
           'Dejar de seguir',
           `¿Dejar de seguir a ${user.name}?`,
           [
@@ -72,7 +72,7 @@ function SearchResultCard({ user, currentUserId }: { user: any; currentUserId: s
               style: 'destructive',
               onPress: async () => {
                 try { await unfollow(user.id); } catch (e: any) {
-                  Alert.alert('Error', e.message ?? 'No se pudo completar la acción.');
+                  showAlert('Error', e.message ?? 'No se pudo completar la acción.');
                 }
               },
             },
@@ -82,7 +82,7 @@ function SearchResultCard({ user, currentUserId }: { user: any; currentUserId: s
         await follow(user.id);
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'No se pudo completar la acción.');
+      showAlert('Error', e.message ?? 'No se pudo completar la acción.');
     }
   }
 
@@ -128,7 +128,7 @@ function FollowRequestCard({ requester, currentUserId }: { requester: any; curre
     try {
       await follow(requester.id);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'No se pudo aceptar la solicitud.');
+      showAlert('Error', e.message ?? 'No se pudo aceptar la solicitud.');
     }
   }
 
@@ -136,7 +136,7 @@ function FollowRequestCard({ requester, currentUserId }: { requester: any; curre
     try {
       await reject(requester.id);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'No se pudo rechazar la solicitud.');
+      showAlert('Error', e.message ?? 'No se pudo rechazar la solicitud.');
     }
   }
 
@@ -197,9 +197,9 @@ function FriendCard({ friend, isMutual = true }: { friend: any; isMutual?: boole
         <View style={styles.avatarContainer}>
           <Avatar uri={friend.avatar ?? null} size={56} radius={10} />
         </View>
-        {isMutual && (
+        {isMutual && friend.affinity > 0 && (
           <View style={[styles.affinityBadge, friend.isHighAffinity ? styles.affinityBadgeHigh : styles.affinityBadgeLow]}>
-            <Text style={styles.affinityBadgeText}>{friend.affinity}%</Text>
+            <Text style={[styles.affinityBadgeText, !friend.isHighAffinity && { color: '#727973' }]}>{friend.affinity}%</Text>
           </View>
         )}
       </View>
@@ -329,13 +329,13 @@ export default function AmigosScreen() {
         <TouchableOpacity
           style={styles.headerRight}
           onPress={() => router.push(`/profile/${currentUser?.id}`)}
-          onLongPress={() =>
-            Alert.alert('Cuenta', '', [
+          onLongPress={() => {
+            showAlert('Cuenta', '', [
               { text: 'Ver perfil', onPress: () => router.push(`/profile/${currentUser?.id}`) },
               { text: 'Cerrar sesión', style: 'destructive', onPress: () => supabase.auth.signOut() },
               { text: 'Cancelar', style: 'cancel' },
-            ])
-          }
+            ]);
+          }}
           activeOpacity={0.8}
         >
           <Avatar uri={currentUser?.avatar} size={32} />
@@ -346,6 +346,7 @@ export default function AmigosScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* Search bar */}
         <View style={styles.searchContainer}>

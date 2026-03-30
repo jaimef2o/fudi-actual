@@ -8,163 +8,26 @@ import {
   Platform,
   Dimensions,
   ActivityIndicator,
-  Alert,
   Share,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { showAlert } from '../../lib/utils/alerts';
+import { getTasteLevel, getProgressToNextLevel, visitsToNextLevel } from '../../lib/utils/tasteProfile';
+import { useState, useEffect } from 'react';
 import { useAppStore } from '../../store';
 import { useProfile, useFriends, useRelationship, useFollowUser, useUnfollowUser, useFollowerCount, useFollowingCount } from '../../lib/hooks/useProfile';
 import { useUserRanking } from '../../lib/hooks/useVisit';
 import { useUserFeed } from '../../lib/hooks/useFeed';
 import { InfoTag } from '../../components/InfoTag';
 import { getDisplayName } from '../../lib/utils/restaurantName';
+import { extractPriceLabel } from '../../lib/api/places';
 import { supabase } from '../../lib/supabase';
+import { scorePalette } from '../../lib/sentimentColors';
 
 const { width } = Dimensions.get('window');
 const GRID_CELL = (width - 4) / 3;
 
-// ── SHARED IMAGE CONSTANTS ────────────────────────────────────────────────────
-
-const P_R1 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCwTgROq2RTEr8n6fVTKzoBQV7JfU3c_sY4jT7drdus_7SG7VK_GDkPfoyvqqFpNVTSjPyyJP7uy8GIb-uucfjWFUkLo6pmTNi2HEdmjfS67bpoNR5aXYsOqXFJJaHFtOCbXHngWzQyoYsh8MKqsWZt_jfSBerWY6eHybkfvS6GC-PnCSCKN5WTjBUV4k5pWv71zG0WfXO-fGL840en1AeqUoTNRupaLzyr_FsbgXImTGDQ7-FJGvAd7ZEKtPfb7CBs5kgZo3iQwWY';
-const P_R2 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuBzTvAwayFpahAbDrhNrgvM_e9ikaYZoRUIsNfC1sWjH1DLS0K4It7mmEzg8yQD3is2i65dg1Zd0ppZl8d73tDr46tzUcom6vk1IxiEeYwN539xQJDt9ylx2JG5nLIdZxpz98NpbycZ7qna6zkzsM6Wph4N--HgEXcY6r_Beb__sw7MF1hlgUkdVQOMMxI5RusdU5Ydi4LrtiThsTYBbV8JDr--9cgdkJrgit24GYvEczOfCUwMNGDEAq1v9EU37nCUsnSVsr2dX88';
-const P_R3 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuAtxAL136ZY9-KwgNPCo1ED5Uu2to_Yvf0zK4iINAuDaiYuGujR2Gl2zB5ShHd8XF9lVX7x0hMMXePugLZWBxxLaZEys-Fi9uj9D5BpqJdsGySfJevfuf0srNqKuqD4o-xmhb183neQALQySxMTOr_58uPGMdmdpHUoiuOYdPvfoQcW1NWF1c0y1GmJcxNhqFfRfLztDn3db0vEVcuUJxEbtHuNPOV9TggjA3YYnmc7KGVzVYZn2DXuoWeJeqyat2bj-oTw5Sf8xRY';
-const P_D1 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCMZV_WojyxnnP3GhLLKT3PyPXUA4X4dGId_1sI2dmcgKEvOqZrcveLcwiBp5qrxM6xcjkRWMiU9jiQhigjDD-NQrWB841h1nnGmiWbuFQpJUF4uB1n9IcfJK5PNA0kE3_0IpEzcxoNVNyUR-YG5lu0Wg50eU5-X_DiEBU6j9iR1vUM-1s2BSYwVoCsUXLgUUZptGLzC-AhCBhMGtk_6ndHDeFN4BglfimU2LiYx6S575Gf6WsVaRl6XA1ZYQElIa4DHxTDMH-ooFQ';
-const P_D2 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuB8Qxcy6TTA1owp6bBozdPnOYIEbT09tO8Ajleq8u1uU2TH6pOkqvEZZZbm9o1TdVl-yvrOB1SS9oX1FGgCCtc4ZT_nZdAgLrgbrgRUQzhrMMrp4thOzOMvGHRTxnc7cRqlJj75sMpQ6bI2z66UdwnUVTz5LSrRY573zXxpInss3o1SqnVadPFbeTGzrGk8DlXeBwKPqt_HKS7CacEol3kNHMxGl1LcSqgBcL2tzaJo77WuUna_shLBnz5cs-L8Hyt_UgydNV1s3Bk';
-const P_D3 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDrPJnME-zs4KV1PEEliIuSWe6we9KkGSbUGhTQiQcaZXYwYpA-5GRngMYWhO5m9b6yFQGT9M4KbYC7JoNk8MUR1PrW0cYbU7LA7LWa9p06CbxySXXsfTL3nZ8KYsjERF98EudAOvUXr5i_5lw-roDBFX1Hg9OniEVA2H7gTUnXGKlFnioFYdq4uKOcd-XWZVOEXBAe_pLIFsnFqf-pF3X8_Bce6XA5UANSViVfK0W0tbcCdur48r5wzgMEeY623Zv9BOo4wZMUE';
-const P_D4 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuBAoqJDSK1wNGM_4yPL7M_SWV4npDVCkRXk3o_RHz9tjuqVKfrTqhBZNlhnO00mYeQ9VsWS3XcxQ0aXfgYvu1ocH2cxzCxAKY_v84RQ0pgGjUzlnzUA6qLsczSZ4CzXibis81zQ39yGvE45d2Q_7K2pzzhZDZD68s91NWycN8mKm0cDMZ1sky_kUBBqYxvoAtv0WXUIDutqivsnUmJQPlt1isqffDauBnMjL83K2-p2wWqSjwVSy_lmH1qASx2G-mTYD7LFawf-mcw';
-const P_D5 = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDJurDJ_H6kKlQMwlk3OeTfVn5Yr-rTtKukgmvJptdvGaZdKnsCVSTb1zxZhltyu8U7KtqtnFCvh4ZKHBua73kZi4VBWcw5ozP9wjtv7Jcyf5CkiX4kngL-SSMkr0AgFPZlGE1wOH_M5Fx9WO0mBKApyqFVGB0BY8ly6FHeLXxTjWL1uoOGMNbw4X6K0zwfew53yXRGhwMb-8n1q8PUIjawUR2RMO4y3E5PIkklPJ0XYuw4n-Y3e1MS2ktzr8uWDbPT1Lu0VbILyFU';
-const P_AVT = 'https://lh3.googleusercontent.com/aida-public/AB6AXuBY_P8WAwGdtqJnDEfmkWwGtMEBxK_q75-e3WPeq3eJtCZ9hvBphNe8kNaM-xp6PnisryCyvD2VhhMwd6E4QEhzEdq0k6WoCRGXgFAr-yZybHU-kOnwrGLaKlcPke2b-9-SlUxxBHIFI6nUVRXrQ9DnrhC9Mxf15r8ZbBeahLaqzBoCWyNbE3LZCNAr_UhXId5-GXgJ9NiaOxkNb1HrVw8S-MxnHnWArARJccpyQiTNC1OrPdqWpdA_SeKxMihbbi2TqlfhHmJUYVE';
-const AVT_JAVIER = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCAFdDwvquATLmpsLf8yzCu7IVfZaYZL2NBqWCZvEyAV0fCCBjeS6gr4LXlclF_7aPXTfuWNmsDcY_Po1nP1RT7Q7yOllSvdJ76fhD1vgsgvg6D9LuO41CudDHbvfcVVZPuTxXW4X4QHcbd4mM5McSBaduhW6RhJ4yEFU6TLMexQz2WWwL8_53xmXEHqc5jHXeNFSo9qFWcBfy9BrxEUvfqPlcCYIBY4k2XKfa-X3Y3fErrYK6zO_XWM39beb0Z9MsE9W6aA9HwiPY';
-const AVT_ELENA = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCshqfu17SkfytNBsWvHTdZVFJvD1d36xezrVplFXfKngGJhcR--knUcvVfnmBc9QpAb4hz8EeilLUFRPXWC-3bjNa5e0OA6jrVKCdsnp_GF8ZDzIF9LuUmJP56qgJxGpuGZOm9p7HVyyVKzdu_KgA33Ouf2zEPg-y8nUOqImFccdQI2lk3cHmwTTVn6tjTIFFRv86E80NKtE2ywkJ58gZ5DBaBQBZC2uBUNxv-eBK7C-Pa687xheadVznM3v1JpygDryc11HD-d5U';
-const AVT_MARCOS = 'https://lh3.googleusercontent.com/aida-public/AB6AXuDYcqNp6jVFXZXm4aMdDlZQggdphR4UYfjTVE_CETMzDn9gCZkT3aHm8Otgmb4OZTZ2H39MnGN1bIp1buJMqVUqShadC-AQ2v_N7Y3A-qP_BMSM4-5Ra8191d6dF-zP_2LJeMQdvQkjuMyYArFrDWcP8kV1RuamQpUAzoZypKRCXOww_HEKkyh7Q2ECt4kXQRMDgMYscmij1hpIRV9dxk_0xP3do6hhfqCtIyQ4m418nWqGl93AfUwOTvmbzbcBy7zgMN2z_PSB42s';
-const AVT_SOFIA = 'https://lh3.googleusercontent.com/aida-public/AB6AXuCT6XkKRCDK0V3jy8EP6N74OA0WAFokkdSIG6fiBIVjKr8CsbFEztT-Lc7YhEG1kn3GvdcHqUEQ2B0e5N9oKrO15B65RDjhNi0wOqktuIAK0ReJojw2_hN7VtUb_verbMOpA0GLeHesiBcSmAU9n2zyabfzAAJGuAEniAQ7ZzBZemRLLeAN6Z6KUF7u8xQD93sdvebl106OhL7M7Z2xgDR-pJAWCb6ZiayyRjsvfqyJbZbPyWtvRiUJmGCYf739YqCFYYdqcEtBWZo';
-
-// ── OWN PROFILE ───────────────────────────────────────────────────────────────
-
-const MY_PROFILE = {
-  name: 'Jaime F.',
-  city: 'Madrid',
-  country: 'España',
-  home_city: 'Madrid',
-  title: 'CRÍTICO GASTRONÓMICO & GOURMET',
-  levelLabel: 'QuintoExquisito',
-  bio: 'Apasionado de la gastronomía española y la cocina de autor. Siempre buscando el próximo descubrimiento.',
-  avatar: P_AVT,
-  stats: { visited: 124, average: 9.1, friends: 850 },
-  topRestaurants: [
-    { id: '1', name: 'Casa Botín', neighborhood: 'La Latina · Madrid', cuisine: 'Española & Tapas', price: '€€', score: 9.5, image: P_R1 },
-    { id: '2', name: "L'Atelier", neighborhood: 'Chamberí · Madrid', cuisine: 'Cocina de Autor', price: '€€€€', score: 9.2, image: P_R2 },
-    { id: '3', name: 'DiverXO', neighborhood: 'Tetuán · Madrid', cuisine: null, price: '€€€€', score: 9.0, image: P_R3 },
-  ],
-  activityPosts: [
-    { id: '1', image: P_D1 }, { id: '2', image: P_R1 }, { id: '3', image: P_R2 },
-    { id: '4', image: P_D2 }, { id: '5', image: P_D3 }, { id: '6', image: P_R3 },
-    { id: '7', image: P_D4 }, { id: '8', image: P_D5 }, { id: '9', image: P_D1 },
-    { id: '10', image: P_R1 }, { id: '11', image: P_D2 }, { id: '12', image: P_R2 },
-  ],
-};
-
-// ── OTHER USERS ───────────────────────────────────────────────────────────────
-
-const OTHER_PROFILES: Record<string, {
-  name: string; city: string; country: string; title: string;
-  bio: string; levelLabel: string; avatar: string; affinity: number;
-  stats: { visited: number; average: number; friends: number };
-  topRestaurants: { id: string; name: string; neighborhood: string; cuisine: string; score: number; image: string }[];
-  commonRestaurants: { id: string; name: string; image: string }[];
-  activityPosts: { id: string; image: string }[];
-}> = {
-  '1': {
-    name: 'Javier Ruiz',
-    city: 'Madrid', country: 'España',
-    title: 'EXPLORADOR GASTRONÓMICO',
-    bio: 'Me muevo por Madrid buscando rincones con historia y cocina honesta. El cochinillo y los vermuts son mi religión.',
-    levelLabel: 'GourmetTotal',
-    avatar: AVT_JAVIER,
-    affinity: 98,
-    stats: { visited: 42, average: 8.4, friends: 127 },
-    topRestaurants: [
-      { id: '1', name: 'Casa Botín', neighborhood: 'La Latina · Madrid', cuisine: 'Cocina Castellana', score: 9.2, image: P_R1 },
-      { id: '3', name: 'Sacha', neighborhood: 'Almagro · Madrid', cuisine: 'Bistró', score: 8.9, image: P_R3 },
-      { id: '2', name: 'Disfrutar', neighborhood: 'Eixample · Barcelona', cuisine: 'Alta Cocina', score: 8.7, image: P_R2 },
-    ],
-    commonRestaurants: [
-      { id: '1', name: 'Casa Botín', image: P_R1 },
-      { id: '3', name: 'Sacha', image: P_R3 },
-    ],
-    activityPosts: [
-      { id: '1', image: P_R1 }, { id: '2', image: P_D1 }, { id: '3', image: P_D2 },
-      { id: '4', image: P_R2 }, { id: '5', image: P_D3 }, { id: '6', image: P_R3 },
-    ],
-  },
-  '2': {
-    name: 'Elena M.',
-    city: 'Barcelona', country: 'España',
-    title: 'FANÁTICA DE LA COCINA ASIÁTICA',
-    bio: 'Barcelona es mi casa y Disfrutar mi catedral. Obsesionada con los sabores umami y la cocina de fusión asiática.',
-    levelLabel: 'UmamiMaster',
-    avatar: AVT_ELENA,
-    affinity: 85,
-    stats: { visited: 128, average: 9.1, friends: 340 },
-    topRestaurants: [
-      { id: '2', name: 'Disfrutar', neighborhood: 'Eixample · Barcelona', cuisine: 'Alta Cocina', score: 9.5, image: P_R2 },
-      { id: '1', name: 'Tickets', neighborhood: 'Poble Sec · Barcelona', cuisine: 'Tapas Creativas', score: 9.1, image: P_R1 },
-      { id: '3', name: 'Hoja Santa', neighborhood: 'Eixample · Barcelona', cuisine: 'Mexicana', score: 8.8, image: P_R3 },
-    ],
-    commonRestaurants: [
-      { id: '2', name: 'Disfrutar', image: P_R2 },
-      { id: '1', name: 'Casa Botín', image: P_R1 },
-      { id: '3', name: 'DiverXO', image: P_R3 },
-    ],
-    activityPosts: [
-      { id: '1', image: P_D4 }, { id: '2', image: P_R2 }, { id: '3', image: P_D5 },
-      { id: '4', image: P_R1 }, { id: '5', image: P_D1 }, { id: '6', image: P_R3 },
-    ],
-  },
-  '3': {
-    name: 'Marcos V.',
-    city: 'Madrid', country: 'España',
-    title: 'TAPAS & VERMUT AFICIONADO',
-    bio: 'La barra del bar es mi oficina. Ponzano es mi barrio y el vermut del domingo, mi ritual sagrado.',
-    levelLabel: 'TapasLover',
-    avatar: AVT_MARCOS,
-    affinity: 72,
-    stats: { visited: 67, average: 7.8, friends: 89 },
-    topRestaurants: [
-      { id: '1', name: 'Sala de Despiece', neighborhood: 'Ponzano · Madrid', cuisine: 'Tapas Modernas', score: 8.5, image: P_R1 },
-      { id: '2', name: 'Bar Tomate', neighborhood: 'Almagro · Madrid', cuisine: 'Mediterránea', score: 8.2, image: P_R2 },
-      { id: '3', name: 'La Pepita', neighborhood: 'Centro · Madrid', cuisine: 'Cocina Española', score: 7.9, image: P_R3 },
-    ],
-    commonRestaurants: [
-      { id: '1', name: 'Bar Tomate', image: P_R1 },
-    ],
-    activityPosts: [
-      { id: '1', image: P_D2 }, { id: '2', image: P_D3 }, { id: '3', image: P_R1 },
-      { id: '4', image: P_D1 }, { id: '5', image: P_R2 }, { id: '6', image: P_D4 },
-    ],
-  },
-  '4': {
-    name: 'Sofia Blanco',
-    city: 'Valencia', country: 'España',
-    title: 'BRUNCH & CAFÉ HUNTER',
-    bio: 'En busca del café perfecto y el aguacate tostado que lo acompañe. Valencia, Barcelona y Madrid en rotación.',
-    levelLabel: 'CafeNomad',
-    avatar: AVT_SOFIA,
-    affinity: 61,
-    stats: { visited: 15, average: 8.0, friends: 34 },
-    topRestaurants: [
-      { id: '1', name: 'Masa Madre', neighborhood: 'Chueca · Madrid', cuisine: 'Brunch · Panadería', score: 8.8, image: P_R1 },
-      { id: '2', name: 'Federal Café', neighborhood: 'Sant Antoni · Barcelona', cuisine: 'Brunch', score: 8.3, image: P_R2 },
-      { id: '3', name: 'Umami Bar', neighborhood: 'Malasaña · Madrid', cuisine: 'Japonesa Fusión', score: 8.0, image: P_R3 },
-    ],
-    commonRestaurants: [],
-    activityPosts: [
-      { id: '1', image: P_D5 }, { id: '2', image: P_R3 }, { id: '3', image: P_D4 },
-    ],
-  },
-};
 
 const RANK_COLORS = ['#c7ef48', '#f7f3ec', '#f7f3ec'];
 const RANK_TEXT_COLORS = ['#546b00', '#032417', '#032417'];
@@ -195,12 +58,28 @@ export default function ProfileScreen() {
   const isMutualFriend = relType === 'mutual';
   const isFollowing = relType !== null;
 
-  // Build display data from real data + mock fallback
-  const profileName = (realProfile as any)?.name ?? (isOwn ? MY_PROFILE.name : 'Usuario');
-  const profileCity = (realProfile as any)?.city ?? (isOwn ? MY_PROFILE.city : '');
-  const profileBio = (realProfile as any)?.bio ?? (isOwn ? MY_PROFILE.bio : '');
-  const profileAvatar = (realProfile as any)?.avatar_url ?? (isOwn ? MY_PROFILE.avatar : null);
+  // Build display data from real DB data — no mock fallbacks
+  const profileName = (realProfile as any)?.name || 'Usuario';
+  const profileCity = (realProfile as any)?.city ?? '';
+  const profileBio = (realProfile as any)?.bio ?? '';
+  const profileAvatar = (realProfile as any)?.avatar_url ?? null;
   const profileHandle = (realProfile as any)?.handle ?? null;
+
+  const visitCount = realRanking.length;
+  const tasteLevel = getTasteLevel(visitCount ?? 0);
+  const progress = getProgressToNextLevel(visitCount ?? 0);
+  const remaining = visitsToNextLevel(visitCount ?? 0);
+
+  // Update taste_profile in DB if changed (fire-and-forget)
+  useEffect(() => {
+    if (isOwn && currentUser?.id && tasteLevel.name) {
+      supabase
+        .from('users')
+        .update({ taste_profile: tasteLevel.name })
+        .eq('id', currentUser.id)
+        .then(() => {});
+    }
+  }, [tasteLevel.name, isOwn, currentUser?.id]);
 
   const avgScore = realRanking.length > 0
     ? Math.round((realRanking.reduce((s: number, v: any) => s + (v.rank_score ?? 0), 0) / realRanking.length) * 10) / 10
@@ -211,7 +90,7 @@ export default function ProfileScreen() {
     name: v.restaurant ? getDisplayName(v.restaurant, 'ranking') : (v.restaurant?.name ?? '—'),
     neighborhood: [v.restaurant?.neighborhood, v.restaurant?.city].filter(Boolean).join(' · '),
     cuisine: (v.restaurant?.cuisine as string | null) ?? null,
-    price: (v.restaurant?.price_level as string | null) ?? null,
+    price: extractPriceLabel(v.restaurant?.price_level) ?? v.restaurant?.price_level as string | null,
     score: v.rank_score ?? 0,
     image: v.restaurant?.cover_image_url ?? null,
   }));
@@ -226,24 +105,23 @@ export default function ProfileScreen() {
       coverImage: post.restaurant?.cover_image_url ?? null,
       restaurantName: post.restaurant?.name ?? '',
       score: post.rank_score ?? null,
+      note: (post.note as string | null) ?? null,
     };
   });
 
 
   async function handleLogout() {
-    Alert.alert(
+    async function doLogout() {
+      await supabase.auth.signOut();
+      router.replace('/auth');
+    }
+
+    showAlert(
       'Cerrar sesión',
       '¿Estás seguro de que quieres cerrar sesión?',
       [
         { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Cerrar sesión',
-          style: 'destructive',
-          onPress: async () => {
-            await supabase.auth.signOut();
-            router.replace('/auth');
-          },
-        },
+        { text: 'Cerrar sesión', style: 'destructive', onPress: doLogout },
       ]
     );
   }
@@ -251,7 +129,7 @@ export default function ProfileScreen() {
   async function handleFollowToggle() {
     if (!currentUser?.id || !profileUserId) return;
     if (isFollowing) {
-      Alert.alert(
+      showAlert(
         isMutualFriend ? 'Dejar de ser amigos' : 'Dejar de seguir',
         `¿Dejar de seguir a ${profileName}?`,
         [
@@ -261,7 +139,7 @@ export default function ProfileScreen() {
             style: 'destructive',
             onPress: async () => {
               try { await unfollow(profileUserId); } catch (e: any) {
-                Alert.alert('Error', e.message ?? 'No se pudo completar la acción.');
+                showAlert('Error', e.message ?? 'No se pudo completar la acción.');
               }
             },
           },
@@ -269,7 +147,7 @@ export default function ProfileScreen() {
       );
     } else {
       try { await follow(profileUserId); } catch (e: any) {
-        Alert.alert('Error', e.message ?? 'No se pudo completar la acción.');
+        showAlert('Error', e.message ?? 'No se pudo completar la acción.');
       }
     }
   }
@@ -331,6 +209,47 @@ export default function ProfileScreen() {
             {profileBio ? (
               <Text style={styles.profileBio}>{profileBio}</Text>
             ) : null}
+
+            {/* Taste Profile Badge */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 8,
+            }}>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                backgroundColor: tasteLevel.color,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 12,
+              }}>
+                <MaterialIcons name={tasteLevel.icon as any} size={14} color={tasteLevel.level >= 3 ? '#546b00' : '#727973'} />
+                <Text style={{
+                  fontFamily: 'Manrope-Bold',
+                  fontSize: 11,
+                  color: tasteLevel.level >= 3 ? '#546b00' : '#727973',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.5,
+                }}>
+                  {tasteLevel.name}
+                </Text>
+              </View>
+            </View>
+
+            {/* Progress to next level */}
+            {remaining > 0 && (
+              <View style={{ marginTop: 6, alignItems: 'center', gap: 4 }}>
+                <View style={{ width: 120, height: 3, backgroundColor: '#e6e2db', borderRadius: 2, overflow: 'hidden' }}>
+                  <View style={{ width: `${progress * 100}%` as any, height: '100%', backgroundColor: '#c7ef48', borderRadius: 2 }} />
+                </View>
+                <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 10, color: '#c1c8c2' }}>
+                  {remaining} visitas para el siguiente nivel
+                </Text>
+              </View>
+            )}
 
             {/* Action button */}
             {isOwn ? (
@@ -476,7 +395,7 @@ function FavoritosTab({
               <Text style={styles.scoreBadgeText}>{restaurant.score.toFixed(1)}</Text>
             </View>
             <View style={styles.favInfoOverlay}>
-              <Text style={styles.favName}>{restaurant.name}</Text>
+              <Text style={styles.favName}>{getDisplayName(restaurant as any, 'ranking')}</Text>
               {(restaurant.cuisine || restaurant.price) ? (
                 <View style={{ flexDirection: 'row', gap: 5, marginTop: 5 }}>
                   <InfoTag value={restaurant.cuisine} />
@@ -503,7 +422,7 @@ function FavoritosTab({
   );
 }
 
-function PublicacionesTab({ posts }: { posts: { id: string; image: string | null; coverImage: string | null; restaurantName: string; score: number | null }[] }) {
+function PublicacionesTab({ posts }: { posts: { id: string; image: string | null; coverImage: string | null; restaurantName: string; score: number | null; note: string | null }[] }) {
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
   if (posts.length === 0) {
@@ -528,7 +447,11 @@ function PublicacionesTab({ posts }: { posts: { id: string; image: string | null
 
   return (
     <View style={styles.gridWrapper}>
-      {posts.map((post, idx) => (
+      {posts.map((post, idx) => {
+        const imgUri = (post.image && !failedIds.has(post.id)) ? post.image : (post.coverImage ?? null);
+        const pal = scorePalette(post.score);
+        const hasScore = (post.score ?? 0) > 0;
+        return (
         <TouchableOpacity
           key={post.id}
           style={[
@@ -539,31 +462,34 @@ function PublicacionesTab({ posts }: { posts: { id: string; image: string | null
           activeOpacity={0.9}
           onPress={() => router.push(`/visit/${post.id}`)}
         >
-          {(post.image && !failedIds.has(post.id)) || post.coverImage ? (
-            <Image
-              source={{ uri: (post.image && !failedIds.has(post.id)) ? post.image : post.coverImage! }}
-              style={styles.gridImage}
-              resizeMode="cover"
-              onError={() => {
-                if (post.image) setFailedIds((prev) => new Set(prev).add(post.id));
-              }}
-            />
-          ) : (
-            // No-photo fallback — editorial cream card
-            <View style={styles.gridImagePlaceholder}>
-              <MaterialIcons name="restaurant" size={16} color="#c1c8c2" />
-              <Text style={styles.gridPlaceholderName} numberOfLines={3}>
-                {post.restaurantName}
-              </Text>
-              {post.score != null && (
-                <View style={styles.gridPlaceholderBadge}>
-                  <Text style={styles.gridPlaceholderScore}>{post.score.toFixed(1)}</Text>
+          {imgUri ? (
+            <View style={{ width: '100%', height: '100%' }}>
+              <Image
+                source={{ uri: imgUri }}
+                style={styles.gridImage}
+                resizeMode="cover"
+                onError={() => {
+                  if (post.image) setFailedIds((prev) => new Set(prev).add(post.id));
+                }}
+              />
+              {hasScore && (
+                <View style={[styles.gridScorePill, { backgroundColor: pal.badgeBg }]}>
+                  <Text style={[styles.gridScoreText, { color: pal.badgeText }]}>{post.score!.toFixed(1)}</Text>
                 </View>
+              )}
+            </View>
+          ) : (
+            <View style={[styles.gridImagePlaceholder, { backgroundColor: pal.tint }]}>
+              {hasScore && (
+                <Text style={[styles.gridPlaceholderScore, { color: pal.badgeText, fontSize: 22, fontFamily: 'NotoSerif-Bold' }]}>
+                  {post.score!.toFixed(1)}
+                </Text>
               )}
             </View>
           )}
         </TouchableOpacity>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -933,24 +859,62 @@ const styles = StyleSheet.create({
   },
   gridImage: { width: '100%', height: '100%' },
 
+  // Score pill — top-right over image
+  gridScorePill: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: '#c7ef48',
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  gridScoreText: {
+    fontFamily: 'NotoSerif-Bold',
+    fontSize: 10,
+    color: '#546b00',
+  },
+
+  // Note overlay — bottom gradient + italic quote
+  gridNoteOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(3,36,23,0.72)',
+    paddingHorizontal: 7,
+    paddingVertical: 8,
+  },
+  gridNoteText: {
+    fontFamily: 'NotoSerif-Italic',
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.92)',
+    lineHeight: 13,
+  },
+
   // No-photo placeholder — editorial card style
   gridImagePlaceholder: {
     width: '100%',
     height: '100%',
     backgroundColor: '#f7f3ec',
-    borderWidth: 1,
-    borderColor: 'rgba(193,200,194,0.25)',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 10,
-    gap: 5,
+    padding: 8,
+    gap: 4,
   },
   gridPlaceholderName: {
     fontFamily: 'NotoSerif-BoldItalic',
-    fontSize: 10,
+    fontSize: 9,
     color: '#032417',
     textAlign: 'center',
-    lineHeight: 14,
+    lineHeight: 13,
+  },
+  gridPlaceholderNote: {
+    fontFamily: 'NotoSerif-Italic',
+    fontSize: 8,
+    color: '#424844',
+    textAlign: 'center',
+    lineHeight: 12,
   },
   gridPlaceholderBadge: {
     backgroundColor: '#c7ef48',

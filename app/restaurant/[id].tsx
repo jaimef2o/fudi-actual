@@ -13,7 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '../../store';
 import {
   useRestaurant,
@@ -22,9 +22,11 @@ import {
   useRelevantRestaurantIds,
   useFriendStats,
 } from '../../lib/hooks/useRestaurant';
-import { useBookmark } from '../../lib/hooks/useVisit';
+import { useBookmark, useSavedRestaurants } from '../../lib/hooks/useVisit';
 import { InfoTag } from '../../components/InfoTag';
 import { scorePalette } from '../../lib/sentimentColors';
+import { getPlaceDetails, resolvePhotoUrl } from '../../lib/api/places';
+import { supabase } from '../../lib/supabase';
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -50,10 +52,17 @@ function RelationLabel({ isMutual }: { isMutual: boolean }) {
 
 export default function RestaurantScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const [isFavorited, setIsFavorited] = useState(false);
   const currentUser = useAppStore((s) => s.currentUser);
   const showToast   = useAppStore((s) => s.showToast);
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
+  const { data: savedRestaurants } = useSavedRestaurants(currentUser?.id);
+  // Derive saved state from real data; pendingOverride gives instant optimistic feedback
+  const isFavoritedFromDB = useMemo(
+    () => (savedRestaurants ?? []).some((r: any) => r.restaurant?.id === id),
+    [savedRestaurants, id]
+  );
+  const [pendingFav, setPendingFav] = useState<boolean | null>(null);
+  const isFavorited = pendingFav !== null ? pendingFav : isFavoritedFromDB;
 
   const { data: restaurant, isLoading: loadingRest, isError: restaurantError } = useRestaurant(id);
   const { data: globalStats } = useRestaurantStats(id);
@@ -62,12 +71,38 @@ export default function RestaurantScreen() {
   const { data: friendStatsData } = useFriendStats(relevantIds, currentUser?.id);
   const { data: recentVisits = [] } = useRecentVisits(relevantIds, currentUser?.id);
 
-  const isChain = (relevantIds?.length ?? 0) > 1;
+  const isChain = chainData?.chainId != null;
   const displayName = chainData?.chainName ?? restaurant?.name ?? '—';
   const locationDisplay = isChain ? 'Múltiples ubicaciones' : (restaurant?.neighborhood ?? restaurant?.city ?? null);
   const cuisine = (restaurant as any)?.cuisine as string | null ?? null;
   const priceLevel = (restaurant as any)?.price_level as string | null ?? null;
-  const coverImage = (restaurant as any)?.cover_image_url as string | null ?? null;
+  const [fetchedCover, setFetchedCover] = useState<string | null>(null);
+  const dbCover = (restaurant as any)?.cover_image_url as string | null ?? null;
+  // Detect broken API URLs stored in DB (contain skipHttpRedirect or are v1 media endpoints)
+  const isBrokenUrl = dbCover ? dbCover.includes('places.googleapis.com') : false;
+  const usableCover = isBrokenUrl ? null : dbCover;
+  const coverImage = usableCover ?? fetchedCover;
+
+  // Fetch cover photo from Google Places if missing or broken in DB
+  useEffect(() => {
+    if (usableCover || !restaurant || fetchedCover) return;
+    const placeId = (restaurant as any)?.google_place_id as string | undefined;
+    if (!placeId) return;
+    (async () => {
+      try {
+        const details = await getPlaceDetails(placeId);
+        const photoRef = details?.photos?.[0]?.photo_reference;
+        if (photoRef) {
+          const url = await resolvePhotoUrl(photoRef);
+          if (url) {
+            setFetchedCover(url);
+            // Backfill / fix in DB
+            supabase.from('restaurants').update({ cover_image_url: url }).eq('id', id).then(() => {});
+          }
+        }
+      } catch {}
+    })();
+  }, [usableCover, restaurant, id]);
 
   const friendScore = friendStatsData?.friendScore ?? null;
   const friendVisitCount = friendStatsData?.friendVisitCount ?? 0;
@@ -163,13 +198,20 @@ export default function RestaurantScreen() {
             onPress={async () => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
               const next = !isFavorited;
-              setIsFavorited(next);
+              setPendingFav(next);
               try {
                 if (id && currentUser?.id) {
                   await toggleBookmark({ restaurantId: id, save: next });
-                  if (next) showToast('Restaurante añadido a guardados');
+                  showToast(next ? 'Restaurante guardado ✓' : 'Restaurante eliminado de guardados');
                 }
-              } catch { setIsFavorited(!next); }
+              } catch (err: any) {
+                setPendingFav(!next); // revert optimistic
+                const msg = err?.message ?? String(err);
+                console.error('[fudi:bookmark] toggle failed:', msg);
+                showToast(`Error: ${msg.slice(0, 80)}`);
+              } finally {
+                setPendingFav(null); // let DB-derived state take over
+              }
             }}
             activeOpacity={0.7}
           >

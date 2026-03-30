@@ -9,18 +9,22 @@ import {
   Platform,
   Modal,
   KeyboardAvoidingView,
-  ActivityIndicator,
-  Alert,
+  RefreshControl,
 } from 'react-native';
-import { router } from 'expo-router';
+import { showAlert } from '../../lib/utils/alerts';
+import { useShimmer, RankingItemSkeleton, SavedItemSkeleton } from '../../components/SkeletonLoader';
+import { router, useFocusEffect } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import * as Haptics from 'expo-haptics';
 import Svg, { Circle } from 'react-native-svg';
 import { LocationFilterBar, LocationFilters, EMPTY_FILTERS } from '../../components/LocationFilterBar';
 import { InfoTag } from '../../components/InfoTag';
 import { useAppStore } from '../../store';
 import { useUserRanking, useSavedRestaurants } from '../../lib/hooks/useVisit';
 import { getDisplayName } from '../../lib/utils/restaurantName';
+import { extractPriceLabel } from '../../lib/api/places';
+import { useQueryClient } from '@tanstack/react-query';
 
 // ── DATA ────────────────────────────────────────────────────────────────────
 
@@ -92,8 +96,25 @@ export default function ListasScreen() {
   const [activeSort, setActiveSort] = useState('Más reciente');
   const [sortOpen, setSortOpen] = useState(false);
   const currentUser = useAppStore((s) => s.currentUser);
-  const { data: rankingData, isLoading: loadingRanking } = useUserRanking(currentUser?.id);
-  const { data: savedData, isLoading: loadingSaved } = useSavedRestaurants(currentUser?.id);
+  const queryClient = useQueryClient();
+  const { data: rankingData, isLoading: loadingRanking, refetch: refetchRanking } = useUserRanking(currentUser?.id);
+  const { data: savedData, isLoading: loadingSaved, refetch: refetchSaved } = useSavedRestaurants(currentUser?.id);
+  const shimmer = useShimmer();
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Force-refetch both lists every time this tab gains focus
+  useFocusEffect(
+    useCallback(() => {
+      refetchRanking();
+      refetchSaved();
+    }, [refetchRanking, refetchSaved])
+  );
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await Promise.all([refetchRanking(), refetchSaved()]);
+    setRefreshing(false);
+  }
 
   // Single filter objects — draft (inside modal) and applied (active on list)
   const [draftFilters, setDraftFilters] = useState<LocationFilters>({ ...EMPTY_FILTERS });
@@ -140,7 +161,7 @@ export default function ListasScreen() {
     id: item.restaurant?.id ?? '',
     name: item.restaurant ? getDisplayName(item.restaurant, 'ranking') : (item.restaurant?.name ?? ''),
     cuisine: (item.restaurant?.cuisine ?? null) as string | null,
-    price: item.restaurant?.price_level as string | null,
+    price: extractPriceLabel(item.restaurant?.price_level) ?? item.restaurant?.price_level as string | null,
     neighborhood: item.restaurant?.neighborhood ?? '',
     city: (item.restaurant?.city ?? '') as string,
     image: item.restaurant?.cover_image_url ?? null,
@@ -170,7 +191,7 @@ export default function ListasScreen() {
     rank: v.rank_position ?? 0,
     name: v.restaurant ? getDisplayName(v.restaurant, 'ranking') : (v.restaurant?.name ?? ''),
     cuisine: (v.restaurant?.cuisine ?? null) as string | null,
-    price: v.restaurant?.price_level as string | null,
+    price: extractPriceLabel(v.restaurant?.price_level) ?? v.restaurant?.price_level as string | null,
     neighborhood: v.restaurant?.neighborhood ?? '',
     city: (v.restaurant?.city ?? '') as string,
     score: v.rank_score ?? 0,
@@ -207,13 +228,26 @@ export default function ListasScreen() {
         <TouchableOpacity
           style={styles.headerBtn}
           activeOpacity={0.7}
-          onPress={() => Alert.alert('Notificaciones', 'Las notificaciones push estarán disponibles pronto.')}
+          onPress={() => showAlert('Notificaciones', 'Las notificaciones push estarán disponibles pronto.')}
         >
           <MaterialIcons name="notifications-none" size={24} color="#032417" />
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} stickyHeaderIndices={[1]}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        stickyHeaderIndices={[1]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#032417"
+            colors={['#032417']}
+          />
+        }
+      >
         {/* Editorial title */}
         <View style={styles.titleBlock}>
           <Text style={styles.titleMain}>Mis Listas</Text>
@@ -227,7 +261,7 @@ export default function ListasScreen() {
           <View style={styles.tabsContainer}>
             <TouchableOpacity
               style={[styles.tab, activeTab === 'ranking' && styles.tabActive]}
-              onPress={() => setActiveTab('ranking')}
+              onPress={() => { setActiveTab('ranking'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); }}
             >
               <MaterialIcons
                 name="format-list-numbered"
@@ -240,7 +274,7 @@ export default function ListasScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tab, activeTab === 'guardados' && styles.tabActive]}
-              onPress={() => setActiveTab('guardados')}
+              onPress={() => { setActiveTab('guardados'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); }}
             >
               <MaterialIcons
                 name="favorite"
@@ -258,7 +292,11 @@ export default function ListasScreen() {
         {activeTab === 'ranking' && (
           <View style={styles.rankingSection}>
             {loadingRanking && (
-              <ActivityIndicator size="large" color="#032417" style={{ marginVertical: 32 }} />
+              <View style={{ gap: 0 }}>
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <RankingItemSkeleton key={i} shimmer={shimmer} />
+                ))}
+              </View>
             )}
             {!loadingRanking && filteredRanking.length === 0 && (
               <View style={styles.emptyRanking}>
@@ -450,7 +488,11 @@ export default function ListasScreen() {
 
             {/* Results count */}
             {loadingSaved ? (
-              <ActivityIndicator size="large" color="#032417" style={{ marginVertical: 32 }} />
+              <View style={{ gap: 0, marginTop: 8 }}>
+                {[0, 1, 2, 3].map((i) => (
+                  <SavedItemSkeleton key={i} shimmer={shimmer} />
+                ))}
+              </View>
             ) : (
               <Text style={styles.resultsCount}>
                 {filteredGuardados.length} restaurante{filteredGuardados.length !== 1 ? 's' : ''} guardado{filteredGuardados.length !== 1 ? 's' : ''}

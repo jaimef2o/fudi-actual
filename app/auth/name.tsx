@@ -7,10 +7,10 @@ import {
   Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
-  Alert,
   ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
+import { showAlert } from '../../lib/utils/alerts';
 import { useState, useEffect, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
@@ -75,8 +75,10 @@ export default function NameScreen() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
 
+    // upsert so new users (no row yet) get their row created,
+    // and existing users get their name/handle updated.
     const { error } = await (supabase.from('users') as any)
-      .update({ name: name.trim(), handle: handle.trim() })
+      .upsert({ id: user.id, name: name.trim(), handle: handle.trim() })
       .eq('id', user.id);
 
     setLoading(false);
@@ -86,7 +88,7 @@ export default function NameScreen() {
         setHandleStatus('taken');
         setHandleError('Este handle ya está en uso.');
       } else {
-        Alert.alert('Error', error.message);
+        showAlert('Error', error.message);
       }
       return;
     }
@@ -187,16 +189,12 @@ export default function NameScreen() {
 
           <TouchableOpacity
             style={styles.signOutBtn}
-            onPress={() =>
-              Alert.alert('Cerrar sesión', '¿Quieres salir de tu cuenta?', [
+            onPress={() => {
+              showAlert('Cerrar sesión', '¿Quieres salir de tu cuenta?', [
                 { text: 'Cancelar', style: 'cancel' },
-                {
-                  text: 'Cerrar sesión',
-                  style: 'destructive',
-                  onPress: () => supabase.auth.signOut(),
-                },
-              ])
-            }
+                { text: 'Cerrar sesión', style: 'destructive', onPress: () => supabase.auth.signOut() },
+              ]);
+            }}
             activeOpacity={0.7}
           >
             <Text style={styles.signOutText}>Cerrar sesión</Text>

@@ -153,24 +153,9 @@ export default function RootLayout() {
   useEffect(() => {
     if (!fontsLoaded) return;
 
-    async function bootstrap() {
-      // Check existing session on app start
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await loadProfile(session.user.id);
-        if (!bootstrapped.current) {
-          bootstrapped.current = true;
-          router.replace('/(tabs)/feed');
-        }
-      } else {
-        if (!bootstrapped.current) {
-          bootstrapped.current = true;
-          router.replace('/auth');
-        }
-      }
-    }
-
-    async function loadProfile(userId: string) {
+    // Returns the destination route after loading a user's profile into state.
+    // The caller is responsible for the actual navigation.
+    async function loadProfile(userId: string): Promise<'feed' | 'name'> {
       const { data } = await supabase
         .from('users')
         .select('id, name, avatar_url, handle')
@@ -184,12 +169,30 @@ export default function RootLayout() {
           name: profile.name,
           avatar: profile.avatar_url ?? '',
         });
-        // Identify user in Sentry for crash reports
         setMonitoringUser({ id: profile.id, name: profile.name });
+        if (!profile.handle || !profile.name) return 'name';
+        return 'feed';
+      }
+      // Auth user exists but no profile row yet
+      return 'name';
+    }
 
-        // Redirect existing users who never set a handle
-        if (!profile.handle || !profile.name) {
-          router.replace('/auth/name');
+    async function bootstrap() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!bootstrapped.current) {
+        bootstrapped.current = true;
+        if (session?.user) {
+          // Verify the session is actually valid by checking the profile
+          try {
+            const dest = await loadProfile(session.user.id);
+            router.replace(dest === 'name' ? '/auth/name' : '/(tabs)/feed');
+          } catch {
+            // Session is stale or profile fetch failed — sign out and go to auth
+            await supabase.auth.signOut();
+            router.replace('/auth');
+          }
+        } else {
+          router.replace('/auth');
         }
       }
     }
@@ -200,7 +203,10 @@ export default function RootLayout() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' && session?.user) {
-          await loadProfile(session.user.id);
+          // Skip redirect when forgot-password or login flow is managing its own navigation
+          if (useAppStore.getState().suppressAuthRedirect) return;
+          const dest = await loadProfile(session.user.id);
+          router.replace(dest === 'name' ? '/auth/name' : '/(tabs)/feed');
         }
         if (event === 'SIGNED_OUT') {
           setCurrentUser(null);

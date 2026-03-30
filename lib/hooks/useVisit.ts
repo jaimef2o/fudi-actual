@@ -186,14 +186,12 @@ export function useBookmark(userId: string | undefined) {
       save
         ? bookmarkRestaurant(userId!, restaurantId)
         : unbookmarkRestaurant(userId!, restaurantId),
-    onSuccess: (_, { restaurantId }) => {
-      // Update the saved list in Mis Listas
-      queryClient.invalidateQueries({ queryKey: ['savedRestaurants', userId] });
-      // Update the bookmark icon in feed cards
+    onSuccess: async (_, { restaurantId }) => {
+      // Refetch saved list immediately so pendingFav can be cleared with correct derived state
+      await queryClient.refetchQueries({ queryKey: ['savedRestaurants', userId] });
+      // Background-invalidate the rest (non-blocking)
       queryClient.invalidateQueries({ queryKey: ['feed', userId] });
-      // Update the ♡ button in restaurant detail
       queryClient.invalidateQueries({ queryKey: ['restaurant', restaurantId] });
-      // Update the stats counters (global + friend saved counts)
       queryClient.invalidateQueries({ queryKey: ['restaurantStats', restaurantId] });
       queryClient.invalidateQueries({ queryKey: ['friendStats'] });
     },

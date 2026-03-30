@@ -51,9 +51,11 @@ create table if not exists public.restaurants (
   lat              numeric(9,6),
   lng              numeric(9,6),
   cuisine          text,
-  price_level      text,
+  price_level      integer,           -- 1-4 ($ to $$$$)
   cover_image_url  text,
-  chain_id         uuid references public.chains(id)
+  chain_id         uuid references public.chains(id),
+  chain_name       text,              -- slug for chain dedup (e.g. "hundred-burgers")
+  brand_name       text               -- human-readable brand name
 );
 
 create table if not exists public.visits (
@@ -67,6 +69,7 @@ create table if not exists public.visits (
   note           text,
   visibility     text not null default 'friends' check (visibility in ('friends','groups','private')),
   source_visit_id uuid references public.visits(id),
+  spend_per_person text,
   created_at     timestamptz not null default now()
 );
 
@@ -173,6 +176,7 @@ create trigger on_auth_user_created
 
 alter table public.users         enable row level security;
 alter table public.relationships  enable row level security;
+alter table public.chains         enable row level security;
 alter table public.restaurants    enable row level security;
 alter table public.visits         enable row level security;
 alter table public.visit_dishes   enable row level security;
@@ -196,11 +200,17 @@ create policy "users: own update" on public.users
 create policy "relationships: own" on public.relationships
   for all using (auth.uid() = user_id);
 
+-- CHAINS: lectura pública (catálogo de referencia)
+create policy "chains: read all" on public.chains
+  for select using (true);
+
 -- RESTAURANTS: lectura pública, escritura autenticada
 create policy "restaurants: read all" on public.restaurants
   for select using (true);
 create policy "restaurants: authenticated insert" on public.restaurants
   for insert with check (auth.role() = 'authenticated');
+create policy "restaurants: authenticated update" on public.restaurants
+  for update using (auth.role() = 'authenticated');
 
 -- VISITS: ver las propias + las de amigos mutuos con visibility=friends
 create policy "visits: own" on public.visits
@@ -285,6 +295,54 @@ create policy "invitations: claim" on public.invitations
 -- SAVED_VISITS: cada usuario gestiona los suyos
 create policy "saved_visits: own" on public.saved_visits
   for all using (auth.uid() = user_id);
+
+-- ── INDEXES ────────────────────────────────────────────────────
+create index if not exists idx_visits_user_id on public.visits(user_id);
+create index if not exists idx_visits_restaurant_id on public.visits(restaurant_id);
+create index if not exists idx_visits_visibility on public.visits(visibility);
+create index if not exists idx_visits_visited_at on public.visits(visited_at desc);
+create index if not exists idx_visit_photos_visit_id on public.visit_photos(visit_id);
+create index if not exists idx_visit_tags_visit_id on public.visit_tags(visit_id);
+create index if not exists idx_list_items_list_id on public.list_items(list_id);
+create index if not exists idx_list_items_restaurant_id on public.list_items(restaurant_id);
+create index if not exists idx_reactions_visit_id on public.reactions(visit_id);
+create index if not exists idx_reactions_user_id on public.reactions(user_id);
+create index if not exists idx_relationships_target_id on public.relationships(target_id);
+create index if not exists idx_saved_visits_user_id on public.saved_visits(user_id);
+create index if not exists idx_invitations_token on public.invitations(token);
+create index if not exists idx_restaurants_chain_name on public.restaurants(chain_name);
+
+-- ── VISIT COMMENTS ─────────────────────────────────────────────
+
+create table if not exists public.visit_comments (
+  id         uuid primary key default uuid_generate_v4(),
+  visit_id   uuid not null references public.visits(id) on delete cascade,
+  user_id    uuid not null references public.users(id) on delete cascade,
+  text       text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_visit_comments_visit_id on public.visit_comments(visit_id);
+
+alter table public.visit_comments enable row level security;
+
+create policy "visit_comments: read via visit" on public.visit_comments
+  for select using (
+    exists (
+      select 1 from public.visits v
+      where v.id = visit_comments.visit_id
+        and (v.user_id = auth.uid()
+          or (v.visibility = 'friends' and exists (
+            select 1 from public.relationships r
+            where r.user_id = auth.uid()
+              and r.target_id = v.user_id
+          ))
+        )
+    )
+  );
+create policy "visit_comments: own write" on public.visit_comments
+  for insert with check (auth.uid() = user_id);
+create policy "visit_comments: own delete" on public.visit_comments
+  for delete using (auth.uid() = user_id);
 
 -- ── STORAGE BUCKET para fotos ────────────────────────────────
 -- Ejecutar esto si no tienes ya el bucket creado en el dashboard

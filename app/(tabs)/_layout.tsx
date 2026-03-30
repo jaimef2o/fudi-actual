@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { View, Text, TouchableOpacity, Platform, StyleSheet } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
@@ -15,7 +16,7 @@ type TabKey = keyof typeof TAB_CONFIG;
 
 function CustomTabBar({ state, navigation }: any) {
   return (
-    <View style={s.bar}>
+    <BlurView intensity={80} tint="systemChromeMaterialLight" style={s.bar}>
       {state.routes.map((route: any, index: number) => {
         const focused  = state.index === index;
         const tab      = TAB_CONFIG[route.name as TabKey];
@@ -40,6 +41,8 @@ function CustomTabBar({ state, navigation }: any) {
               onPress={onPress}
               style={s.center}
               activeOpacity={0.7}
+              accessibilityLabel="Crear nueva visita"
+              accessibilityRole="button"
             >
               <MaterialIcons name="add-circle" size={42} color="#032417" />
             </TouchableOpacity>
@@ -52,6 +55,9 @@ function CustomTabBar({ state, navigation }: any) {
             onPress={onPress}
             activeOpacity={0.7}
             style={[s.tab, focused && s.tabActive]}
+            accessibilityLabel={tab.label}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: focused }}
           >
             <MaterialIcons
               name={tab.icon}
@@ -64,7 +70,7 @@ function CustomTabBar({ state, navigation }: any) {
           </TouchableOpacity>
         );
       })}
-    </View>
+    </BlurView>
   );
 }
 
@@ -73,7 +79,8 @@ const s = StyleSheet.create({
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
     height: Platform.OS === 'ios' ? 86 : 68,
-    backgroundColor: 'rgba(253,249,242,0.92)',
+    backgroundColor: 'rgba(253,249,242,0.65)',
+    overflow: 'hidden' as const,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     shadowColor: '#1c1c18',
@@ -95,6 +102,7 @@ const s = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
     gap: 3,
+    minHeight: 44,
   },
   tabActive: {
     backgroundColor: '#c7ef48',
@@ -113,7 +121,7 @@ const s = StyleSheet.create({
   },
   label: {
     fontFamily: 'Manrope-Medium',
-    fontSize: 9,
+    fontSize: 11,
     color: '#a0a6a1',
     letterSpacing: 0.3,
   },

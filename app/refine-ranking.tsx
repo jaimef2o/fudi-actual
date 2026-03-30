@@ -28,6 +28,7 @@ import { useUserRanking } from '../lib/hooks/useVisit';
 import { swapVisitRanks, recomputeRankPositions, SCORE_BRACKETS } from '../lib/api/visits';
 import { sentimentPalette } from '../lib/sentimentColors';
 import { getDisplayName } from '../lib/utils/restaurantName';
+import { extractPriceLabel } from '../lib/api/places';
 import type { VisitDetail } from '../lib/api/visits';
 
 const PLACEHOLDER = 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600&auto=format&fit=crop';
@@ -279,7 +280,7 @@ export default function RefineRankingScreen() {
             <View style={styles.cardInfo}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardName}>{getDisplayName(higher.restaurant as any, 'ranking')}</Text>
-                <Text style={styles.cardLocation}>{[(higher.restaurant as any).cuisine, (higher.restaurant as any).price_level ? '€'.repeat((higher.restaurant as any).price_level) : null].filter(Boolean).join(' · ')}</Text>
+                <Text style={styles.cardLocation}>{[(higher.restaurant as any).cuisine, extractPriceLabel((higher.restaurant as any).price_level) ?? (higher.restaurant as any).price_level].filter(Boolean).join(' · ')}</Text>
               </View>
               <View style={[styles.scoreRow, { backgroundColor: higherPal.badgeBg }]}>
                 <Text style={[styles.scoreValue, { color: higherPal.badgeText }]}>{(higher.rank_score ?? 0).toFixed(1)}</Text>
@@ -308,7 +309,7 @@ export default function RefineRankingScreen() {
             <View style={styles.cardInfo}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardName}>{getDisplayName(lower.restaurant as any, 'ranking')}</Text>
-                <Text style={styles.cardLocation}>{[(lower.restaurant as any).cuisine, (lower.restaurant as any).price_level ? '€'.repeat((lower.restaurant as any).price_level) : null].filter(Boolean).join(' · ')}</Text>
+                <Text style={styles.cardLocation}>{[(lower.restaurant as any).cuisine, extractPriceLabel((lower.restaurant as any).price_level) ?? (lower.restaurant as any).price_level].filter(Boolean).join(' · ')}</Text>
               </View>
               <View style={[styles.scoreRow, { backgroundColor: lowerPal.badgeBg }]}>
                 <Text style={[styles.scoreValue, { color: lowerPal.badgeText }]}>{(lower.rank_score ?? 0).toFixed(1)}</Text>

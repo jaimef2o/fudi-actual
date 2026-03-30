@@ -12,7 +12,7 @@ import {
 import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef } from 'react';
-import { searchPlaces, getPlaceDetails } from '../lib/api/places';
+import { searchPlaces, getPlaceDetails, resolvePhotoUrl } from '../lib/api/places';
 import { upsertRestaurant } from '../lib/api/restaurants';
 import { useAppStore } from '../store';
 import { useProfile } from '../lib/hooks/useProfile';
@@ -51,6 +51,9 @@ export default function SelectRestaurantScreen() {
       // Fetch full details then upsert into DB
       const details = await getPlaceDetails(place.place_id);
       if (details) {
+        const coverPhotoUrl = details.photos?.[0]
+          ? await resolvePhotoUrl(details.photos[0].photo_reference)
+          : undefined;
         const row = await upsertRestaurant({
           google_place_id: details.place_id,
           name: details.name,
@@ -60,6 +63,7 @@ export default function SelectRestaurantScreen() {
           lng: details.geometry.location.lng,
           google_types: details.types,
           price_level: details.price_level,
+          cover_image_url: coverPhotoUrl ?? undefined,
         });
         router.replace(`/journey-b/${row.id}`);
       } else {
@@ -88,6 +92,7 @@ export default function SelectRestaurantScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       >
         {/* Hint */}
         <Text style={styles.hint}>

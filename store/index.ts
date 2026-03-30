@@ -14,6 +14,10 @@ interface AppState {
   pendingInviteToken: string | null;
   setPendingInviteToken: (token: string | null) => void;
 
+  // Suppress auth redirect (used by forgot password flow)
+  suppressAuthRedirect: boolean;
+  setSuppressAuthRedirect: (v: boolean) => void;
+
   // Toast global
   toastMessage: string | null;
   showToast: (message: string) => void;
@@ -26,6 +30,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   pendingInviteToken: null,
   setPendingInviteToken: (token) => set({ pendingInviteToken: token }),
+
+  suppressAuthRedirect: false,
+  setSuppressAuthRedirect: (v) => set({ suppressAuthRedirect: v }),
 
   toastMessage: null,
   showToast: (message) => set({ toastMessage: message }),

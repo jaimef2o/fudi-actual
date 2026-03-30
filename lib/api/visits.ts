@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { supabase } from '../supabase';
 import type { VisitRow, VisitDishRow, VisitPhotoRow } from '../database.types';
+import { refreshAffinityForUser } from './affinity';
+import { notifyNewVisit, notifyTaggedInVisit } from './notificationTriggers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,7 +31,7 @@ export type CreateVisitInput = {
 };
 
 export type VisitDetail = VisitRow & {
-  restaurant: { id: string; name: string; neighborhood: string | null; cover_image_url: string | null };
+  restaurant: { id: string; name: string; chain_name?: string | null; brand_name?: string | null; neighborhood: string | null; city: string | null; cover_image_url: string | null; cuisine: string | null; price_level: string | null };
   user: { id: string; name: string; avatar_url: string | null };
   dishes: (VisitDishRow & { photos: VisitPhotoRow[] })[];
   photos: VisitPhotoRow[];
@@ -43,7 +45,7 @@ export async function getVisit(visitId: string): Promise<VisitDetail | null> {
     .from('visits')
     .select(`
       *,
-      restaurant:restaurants!restaurant_id (id, name, neighborhood, cover_image_url, cuisine, price_level),
+      restaurant:restaurants!restaurant_id (id, name, chain_name, brand_name, neighborhood, city, cover_image_url, cuisine, price_level),
       user:users!user_id (id, name, avatar_url),
       photos:visit_photos!visit_id (*),
       tags:visit_tags (
@@ -63,7 +65,7 @@ export async function getUserRanking(userId: string): Promise<VisitDetail[]> {
     .from('visits')
     .select(`
       *,
-      restaurant:restaurants!restaurant_id (id, name, neighborhood, city, cuisine, price_level, cover_image_url),
+      restaurant:restaurants!restaurant_id (id, name, chain_name, brand_name, neighborhood, city, cuisine, price_level, cover_image_url),
       user:users!user_id (id, name, avatar_url),
       photos:visit_photos!visit_id (*),
       tags:visit_tags (tagged_user:users!tagged_user_id (id, name, avatar_url))
@@ -75,21 +77,23 @@ export async function getUserRanking(userId: string): Promise<VisitDetail[]> {
   if (error) throw error;
   const visits = (data ?? []) as unknown as VisitDetail[];
 
-  // Deduplicate: one entry per restaurant.
-  // Rule: when multiple visits to the same restaurant exist, the ranking score
+  // Deduplicate: one entry per restaurant (or per chain for franchise locations).
+  // Rule: when multiple visits to the same restaurant/chain exist, the ranking score
   // comes from the MOST RECENT visit (by visited_at). Each post is preserved
   // independently — only the ranking representation uses the latest score.
-  // Visits are already ordered by rank_score DESC; we re-sort by visited_at inside each group.
+  // For chains: all locations of the same chain collapse into one entry.
   const seen = new Map<string, { visit: VisitDetail; mostRecentScore: number }>();
   for (const v of visits) {
-    const rid = (v.restaurant as any).id as string;
+    const r = v.restaurant as any;
+    // Group by chain_name if it exists, otherwise by restaurant id
+    const groupKey = r.chain_name || r.id as string;
     const score = v.rank_score ?? 0;
     const visitedAt = v.visited_at ?? '';
-    if (!seen.has(rid)) {
-      seen.set(rid, { visit: v, mostRecentScore: score });
+    if (!seen.has(groupKey)) {
+      seen.set(groupKey, { visit: v, mostRecentScore: score });
     } else {
-      const entry = seen.get(rid)!;
-      // Keep whichever visit is more recent as the canonical representative
+      const entry = seen.get(groupKey)!;
+      // Keep the most recent visit (by visited_at)
       const existingAt = entry.visit.visited_at ?? '';
       if (visitedAt > existingAt) {
         entry.visit = v;
@@ -365,6 +369,27 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
     if (tagsError) throw tagsError;
   }
 
+  // Fire-and-forget: refresh affinity scores in background
+  refreshAffinityForUser(input.user_id).catch(() => {});
+
+  // Fire-and-forget: push notifications
+  // Get restaurant name for notification text
+  supabase.from('restaurants').select('name').eq('id', input.restaurant_id).single()
+    .then(({ data: rest }) => {
+      if (!rest) return;
+      supabase.from('users').select('name').eq('id', input.user_id).single()
+        .then(({ data: user }) => {
+          if (!user) return;
+          // Notify mutual friends about new visit
+          notifyNewVisit(input.user_id, user.name, rest.name, input.rank_score ?? null, visit.id).catch(() => {});
+          // Notify tagged users
+          if (tagged_user_ids?.length) {
+            notifyTaggedInVisit(user.name, rest.name, tagged_user_ids, visit.id).catch(() => {});
+          }
+        });
+    })
+    .catch(() => {});
+
   return visit;
 }
 
@@ -414,7 +439,8 @@ export async function updateVisitFull(
 
   // 2. Replace dishes
   if (dishes !== undefined) {
-    await supabase.from('visit_dishes').delete().eq('visit_id', visitId);
+    const { error: delDishErr } = await supabase.from('visit_dishes').delete().eq('visit_id', visitId);
+    if (delDishErr) throw delDishErr;
     let insertedDishes: any[] = [];
     if (dishes.length > 0) {
       const { data: dishData, error: dErr } = await supabase
@@ -441,19 +467,21 @@ export async function updateVisitFull(
           type: 'dish' as const,
         }));
       if (rows.length > 0) {
-        await supabase.from('visit_photos').insert(rows);
+        const { error: dishPhotoErr } = await supabase.from('visit_photos').insert(rows);
+        if (dishPhotoErr) throw dishPhotoErr;
       }
     }
   }
 
   // 3. Remove specific photos
   if (removed_photo_ids && removed_photo_ids.length > 0) {
-    await supabase.from('visit_photos').delete().in('id', removed_photo_ids);
+    const { error: rmPhotoErr } = await supabase.from('visit_photos').delete().in('id', removed_photo_ids);
+    if (rmPhotoErr) throw rmPhotoErr;
   }
 
   // 4. Add new restaurant photos
   if (new_restaurant_photo_urls && new_restaurant_photo_urls.length > 0) {
-    await supabase.from('visit_photos').insert(
+    const { error: newPhotoErr } = await supabase.from('visit_photos').insert(
       new_restaurant_photo_urls.map((url) => ({
         visit_id: visitId,
         dish_id: null,
@@ -461,6 +489,7 @@ export async function updateVisitFull(
         type: 'restaurant' as const,
       }))
     );
+    if (newPhotoErr) throw newPhotoErr;
   }
 }
 
@@ -502,13 +531,15 @@ export async function toggleReaction(
  */
 async function getOrCreateWantList(userId: string): Promise<string> {
   // Try to find an existing 'want' list for this user
-  const { data: existing } = await supabase
+  const { data: existing, error: fetchError } = await supabase
     .from('lists')
     .select('id')
     .eq('user_id', userId)
     .eq('type', 'want')
+    .limit(1)
     .maybeSingle();
 
+  if (fetchError) console.error('[fudi:bookmark] SELECT lists error:', fetchError);
   if (existing?.id) return existing.id;
 
   // Create the default want list — handle race condition where another
@@ -520,6 +551,7 @@ async function getOrCreateWantList(userId: string): Promise<string> {
     .single();
 
   if (error) {
+    console.error('[fudi:bookmark] INSERT lists error:', error.code, error.message);
     // If duplicate (unique constraint), fetch the existing one
     if (error.code === '23505') {
       const { data: retry } = await supabase
@@ -530,9 +562,28 @@ async function getOrCreateWantList(userId: string): Promise<string> {
         .single();
       if (retry?.id) return retry.id;
     }
-    throw error;
+    throw new Error(`[lists] ${error.code}: ${error.message}`);
   }
   return created.id;
+}
+
+export async function bookmarkRestaurant(userId: string, restaurantId: string) {
+  const listId = await getOrCreateWantList(userId);
+  // Delete first to avoid duplicate key error, then insert fresh
+  const { error: delError } = await supabase
+    .from('list_items')
+    .delete()
+    .eq('list_id', listId)
+    .eq('restaurant_id', restaurantId);
+  if (delError) console.warn('[fudi:bookmark] DELETE list_items warning:', delError);
+
+  const { error } = await supabase
+    .from('list_items')
+    .insert({ list_id: listId, restaurant_id: restaurantId });
+  if (error) {
+    console.error('[fudi:bookmark] INSERT list_items error:', error.code, error.message);
+    throw new Error(`[list_items] ${error.code}: ${error.message}`);
+  }
 }
 
 export async function getSavedRestaurants(userId: string) {
@@ -543,7 +594,7 @@ export async function getSavedRestaurants(userId: string) {
     .select(`
       added_at,
       restaurant:restaurants!restaurant_id (
-        id, name, neighborhood, city, cuisine, price_level, cover_image_url
+        id, name, chain_name, brand_name, neighborhood, city, cuisine, price_level, cover_image_url
       )
     `)
     .eq('list_id', listId)
@@ -551,20 +602,6 @@ export async function getSavedRestaurants(userId: string) {
 
   if (error) throw error;
   return data ?? [];
-}
-
-export async function bookmarkRestaurant(userId: string, restaurantId: string) {
-  const listId = await getOrCreateWantList(userId);
-  // Delete first to avoid duplicate key error, then insert fresh
-  await supabase
-    .from('list_items')
-    .delete()
-    .eq('list_id', listId)
-    .eq('restaurant_id', restaurantId);
-  const { error } = await supabase
-    .from('list_items')
-    .insert({ list_id: listId, restaurant_id: restaurantId });
-  if (error) throw error;
 }
 
 export async function unbookmarkRestaurant(userId: string, restaurantId: string) {

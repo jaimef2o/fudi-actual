@@ -258,7 +258,10 @@ export async function searchPlaces(query: string, city?: string | null): Promise
       console.warn('searchPlaces error:', json.error.message);
       return [];
     }
-    return (json.suggestions ?? []).map(mapSuggestion);
+    // Only include placePrediction suggestions (skip queryPrediction — they have no place_id)
+    return (json.suggestions ?? [])
+      .filter((s: any) => s.placePrediction?.placeId)
+      .map(mapSuggestion);
   } catch (e) {
     console.error('searchPlaces error', e);
     return [];
@@ -349,12 +352,41 @@ export async function checkIsChainViaGoogle(
  * Returns a photo URL for a given photo reference.
  * Supports both v1 resource names (places/x/photos/y) and legacy photo_reference strings.
  */
+/**
+ * Returns a direct image URL for a given photo reference.
+ * For v1 resource names, fetches the JSON to resolve the actual photoUri.
+ * For legacy references, returns the Maps API photo URL directly.
+ */
+export async function resolvePhotoUrl(photoReference: string, maxWidth = 600): Promise<string | null> {
+  if (photoReference.startsWith('places/')) {
+    try {
+      const res = await fetch(
+        `${V1_BASE}/${photoReference}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`
+      );
+      const json = await res.json();
+      return json.photoUri ?? null;
+    } catch {
+      return null;
+    }
+  }
+  // Legacy photo_reference — direct URL works
+  return (
+    `https://maps.googleapis.com/maps/api/place/photo` +
+    `?maxwidth=${maxWidth}` +
+    `&photo_reference=${photoReference}` +
+    `&key=${API_KEY}`
+  );
+}
+
+/**
+ * Synchronous fallback — returns an API URL that redirects to the image.
+ * Use resolvePhotoUrl() instead when you can await.
+ */
 export function getPhotoUrl(photoReference: string, maxWidth = 600): string {
   if (photoReference.startsWith('places/')) {
-    // New Places API v1 resource name
-    return `${V1_BASE}/${photoReference}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
+    // Without skipHttpRedirect, Google returns a 302 redirect to the actual image
+    return `${V1_BASE}/${photoReference}/media?maxWidthPx=${maxWidth}&key=${API_KEY}`;
   }
-  // Legacy photo_reference from old Places API
   return (
     `https://maps.googleapis.com/maps/api/place/photo` +
     `?maxwidth=${maxWidth}` +

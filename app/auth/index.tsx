@@ -10,7 +10,8 @@ import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { signInWithApple, signInWithGoogle } from '../../lib/api/auth';
 import { useState } from 'react';
-import { ActivityIndicator, Alert } from 'react-native';
+import { ActivityIndicator } from 'react-native';
+import { showAlert } from '../../lib/utils/alerts';
 
 export default function AuthLandingScreen() {
   const [appleLoading, setAppleLoading] = useState(false);
@@ -20,14 +21,14 @@ export default function AuthLandingScreen() {
     setAppleLoading(true);
     const { error } = await signInWithApple();
     setAppleLoading(false);
-    if (error) Alert.alert('Error', error);
+    if (error) showAlert('Error', error);
   }
 
   async function handleGoogle() {
     setGoogleLoading(true);
     const { error } = await signInWithGoogle();
     setGoogleLoading(false);
-    if (error) Alert.alert('Error', error);
+    if (error) showAlert('Error', error);
   }
 
   return (

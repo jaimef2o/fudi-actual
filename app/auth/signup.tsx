@@ -5,13 +5,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  KeyboardAvoidingView,
   ActivityIndicator,
-  Alert,
   ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 
@@ -22,6 +20,9 @@ export default function SignupScreen() {
   const [showPassword, setShowPassword]     = useState(false);
   const [showConfirm, setShowConfirm]       = useState(false);
   const [loading, setLoading]               = useState(false);
+  const [status, setStatus]                 = useState<{ type: 'error' | 'success' | 'info'; msg: string } | null>(null);
+  const passwordRef = useRef<TextInput>(null);
+  const confirmRef = useRef<TextInput>(null);
 
   const emailOk    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const passwordOk = password.length >= 8;
@@ -30,38 +31,51 @@ export default function SignupScreen() {
 
   async function handleSignup() {
     if (!canSubmit) return;
+    setStatus(null);
     setLoading(true);
-    const { data, error } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-    });
-    setLoading(false);
-
-    if (error) {
-      const exists =
-        error.message.toLowerCase().includes('already registered') ||
-        error.message.toLowerCase().includes('user already');
-      Alert.alert(
-        exists ? 'Email ya registrado' : 'Error',
-        exists
-          ? 'Este email ya tiene cuenta. Inicia sesión o recupera tu contraseña.'
-          : error.message,
-      );
-      return;
-    }
-
-    if (data.session) {
-      // Email confirmation disabled — user is immediately signed in
-      // The auth listener in _layout.tsx will handle routing
-    } else {
-      // Email confirmation required.
-      // signUp sends a confirmation link, NOT a 6-digit code.
-      // Trigger signInWithOtp so the user receives the OTP code the verify screen expects.
-      await supabase.auth.signInWithOtp({
+    try {
+      const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
-        options: { shouldCreateUser: false },
+        password,
       });
-      router.push({ pathname: '/auth/verify', params: { email: email.trim(), type: 'email' } });
+      setLoading(false);
+
+      if (error) {
+        const exists =
+          error.message.toLowerCase().includes('already registered') ||
+          error.message.toLowerCase().includes('user already');
+        setStatus({
+          type: 'error',
+          msg: exists
+            ? 'Este email ya tiene cuenta. Inicia sesión o recupera tu contraseña.'
+            : error.message,
+        });
+        return;
+      }
+
+      // Supabase returns a user with identities=[] when the email already exists
+      // but is unconfirmed. Detect this and redirect to login instead.
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        setStatus({ type: 'error', msg: 'Este email ya tiene cuenta. Inicia sesión o recupera tu contraseña.' });
+        return;
+      }
+
+      if (data.session) {
+        // Email confirmation disabled — user is immediately signed in
+        setStatus({ type: 'success', msg: 'Cuenta creada. Redirigiendo...' });
+        // The auth listener in _layout.tsx will handle routing
+      } else {
+        // Email confirmation required.
+        setStatus({ type: 'info', msg: 'Te hemos enviado un código de verificación.' });
+        await supabase.auth.signInWithOtp({
+          email: email.trim(),
+          options: { shouldCreateUser: false },
+        });
+        router.push({ pathname: '/auth/verify', params: { email: email.trim(), type: 'email' } });
+      }
+    } catch (e: any) {
+      setLoading(false);
+      setStatus({ type: 'error', msg: e?.message ?? 'Error de conexión. Inténtalo de nuevo.' });
     }
   }
 
@@ -72,10 +86,7 @@ export default function SignupScreen() {
     : 'strong';
 
   return (
-    <KeyboardAvoidingView
-      style={s.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={s.root}>
       <ScrollView
         contentContainerStyle={s.inner}
         keyboardShouldPersistTaps="handled"
@@ -104,12 +115,12 @@ export default function SignupScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
-              autoComplete="email"
-              textContentType="emailAddress"
               value={email}
               onChangeText={setEmail}
               editable={!loading}
               returnKeyType="next"
+              onSubmitEditing={() => passwordRef.current?.focus()}
+              blurOnSubmit={false}
             />
           </View>
 
@@ -118,18 +129,19 @@ export default function SignupScreen() {
             <Text style={s.label}>CONTRASEÑA</Text>
             <View style={s.passwordRow}>
               <TextInput
-                style={[s.input, { flex: 1 }]}
+                ref={passwordRef}
+                style={s.passwordInput}
                 placeholder="Mínimo 8 caracteres"
                 placeholderTextColor="#c1c8c2"
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="new-password"
-                textContentType="newPassword"
                 value={password}
                 onChangeText={setPassword}
                 editable={!loading}
                 returnKeyType="next"
+                onSubmitEditing={() => confirmRef.current?.focus()}
+                blurOnSubmit={false}
               />
               <TouchableOpacity
                 style={s.eyeBtn}
@@ -178,14 +190,13 @@ export default function SignupScreen() {
             <Text style={s.label}>REPITE LA CONTRASEÑA</Text>
             <View style={[s.passwordRow, confirmPassword.length > 0 && !matchOk && s.rowError]}>
               <TextInput
-                style={[s.input, { flex: 1 }]}
+                ref={confirmRef}
+                style={s.passwordInput}
                 placeholder="Repite tu contraseña"
                 placeholderTextColor="#c1c8c2"
                 secureTextEntry={!showConfirm}
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="new-password"
-                textContentType="newPassword"
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 editable={!loading}
@@ -208,6 +219,17 @@ export default function SignupScreen() {
               <Text style={s.errorText}>Las contraseñas no coinciden</Text>
             )}
           </View>
+
+          {status && (
+            <View style={[s.statusBanner, status.type === 'error' && s.statusError, status.type === 'success' && s.statusSuccess, status.type === 'info' && s.statusInfo]}>
+              <MaterialIcons
+                name={status.type === 'error' ? 'error-outline' : status.type === 'success' ? 'check-circle-outline' : 'info-outline'}
+                size={18}
+                color={status.type === 'error' ? '#ba1a1a' : status.type === 'success' ? '#516600' : '#032417'}
+              />
+              <Text style={[s.statusText, status.type === 'error' && { color: '#ba1a1a' }, status.type === 'success' && { color: '#516600' }]}>{status.msg}</Text>
+            </View>
+          )}
 
           <TouchableOpacity
             style={[s.btn, !canSubmit && s.btnDisabled]}
@@ -234,7 +256,7 @@ export default function SignupScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -296,7 +318,14 @@ const s = StyleSheet.create({
     backgroundColor: '#f7f3ec',
     borderRadius: 14,
     paddingRight: 12,
-    overflow: 'hidden',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    fontFamily: 'Manrope-Regular',
+    fontSize: 16,
+    color: '#1c1c18',
   },
   rowError: { backgroundColor: '#fff0f0' },
   eyeBtn: { padding: 10 },
@@ -360,5 +389,24 @@ const s = StyleSheet.create({
     fontSize: 14,
     color: '#032417',
     textDecorationLine: 'underline',
+  },
+
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#f7f3ec',
+  },
+  statusError: { backgroundColor: '#fff0f0' },
+  statusSuccess: { backgroundColor: '#f0f8e0' },
+  statusInfo: { backgroundColor: '#eef3ff' },
+  statusText: {
+    flex: 1,
+    fontFamily: 'Manrope-Medium',
+    fontSize: 13,
+    color: '#1c1c18',
+    lineHeight: 18,
   },
 });

@@ -5,13 +5,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  KeyboardAvoidingView,
   ActivityIndicator,
   Alert,
   ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 
@@ -20,38 +19,54 @@ export default function LoginScreen() {
   const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading]           = useState(false);
+  const [status, setStatus]             = useState<{ type: 'error' | 'success' | 'info'; msg: string } | null>(null);
+  const passwordRef = useRef<TextInput>(null);
 
   const emailOk    = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const passwordOk = password.length >= 6;
 
   async function handleLogin() {
     if (!emailOk || !passwordOk || loading) return;
+    setStatus(null);
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-    setLoading(false);
-    if (error) {
-      const isBadCredentials =
-        error.message.toLowerCase().includes('invalid') ||
-        error.message.toLowerCase().includes('credentials') ||
-        error.message.toLowerCase().includes('not found');
-      Alert.alert(
-        isBadCredentials ? 'Credenciales incorrectas' : 'Error',
-        isBadCredentials
-          ? 'Email o contraseña incorrectos. Compruébalos o crea una cuenta nueva.'
-          : error.message,
-      );
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) {
+        const msg = error.message.toLowerCase();
+        const isUnconfirmed = msg.includes('email not confirmed');
+        if (isUnconfirmed) {
+          await supabase.auth.signInWithOtp({
+            email: email.trim(),
+            options: { shouldCreateUser: false },
+          });
+          setStatus({ type: 'info', msg: 'Email no confirmado. Te hemos enviado un código de verificación.' });
+          router.push({ pathname: '/auth/verify', params: { email: email.trim(), type: 'email' } });
+          return;
+        }
+        const isBadCredentials =
+          msg.includes('invalid') ||
+          msg.includes('credentials') ||
+          msg.includes('not found');
+        setStatus({
+          type: 'error',
+          msg: isBadCredentials
+            ? 'Email o contraseña incorrectos. Compruébalos o crea una cuenta nueva.'
+            : error.message,
+        });
+      }
+      // Success: onAuthStateChange handles navigation
+    } catch (e: any) {
+      setStatus({ type: 'error', msg: e?.message ?? 'Error de conexión. Inténtalo de nuevo.' });
+    } finally {
+      setLoading(false);
     }
-    // On success, the auth state listener in _layout.tsx handles navigation
   }
 
   return (
-    <KeyboardAvoidingView
-      style={s.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={s.root}>
       <ScrollView
         contentContainerStyle={s.inner}
         keyboardShouldPersistTaps="handled"
@@ -79,12 +94,12 @@ export default function LoginScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
-              autoComplete="email"
-              textContentType="emailAddress"
               value={email}
               onChangeText={setEmail}
               editable={!loading}
               returnKeyType="next"
+              onSubmitEditing={() => passwordRef.current?.focus()}
+              blurOnSubmit={false}
             />
           </View>
 
@@ -92,14 +107,13 @@ export default function LoginScreen() {
             <Text style={s.label}>CONTRASEÑA</Text>
             <View style={s.passwordRow}>
               <TextInput
-                style={[s.input, { flex: 1 }]}
+                ref={passwordRef}
+                style={s.passwordInput}
                 placeholder="Tu contraseña"
                 placeholderTextColor="#c1c8c2"
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="current-password"
-                textContentType="password"
                 value={password}
                 onChangeText={setPassword}
                 editable={!loading}
@@ -119,6 +133,17 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
           </View>
+
+          {status && (
+            <View style={[s.statusBanner, status.type === 'error' && s.statusError, status.type === 'success' && s.statusSuccess, status.type === 'info' && s.statusInfo]}>
+              <MaterialIcons
+                name={status.type === 'error' ? 'error-outline' : status.type === 'success' ? 'check-circle-outline' : 'info-outline'}
+                size={18}
+                color={status.type === 'error' ? '#ba1a1a' : status.type === 'success' ? '#516600' : '#032417'}
+              />
+              <Text style={[s.statusText, status.type === 'error' && { color: '#ba1a1a' }, status.type === 'success' && { color: '#516600' }]}>{status.msg}</Text>
+            </View>
+          )}
 
           <TouchableOpacity
             style={[s.btn, (!emailOk || !passwordOk || loading) && s.btnDisabled]}
@@ -153,7 +178,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -215,7 +240,14 @@ const s = StyleSheet.create({
     backgroundColor: '#f7f3ec',
     borderRadius: 14,
     paddingRight: 12,
-    overflow: 'hidden',
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    fontFamily: 'Manrope-Regular',
+    fontSize: 16,
+    color: '#1c1c18',
   },
   eyeBtn: {
     padding: 10,
@@ -233,6 +265,25 @@ const s = StyleSheet.create({
     fontFamily: 'Manrope-Bold',
     fontSize: 16,
     color: '#032417',
+  },
+
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#f7f3ec',
+  },
+  statusError: { backgroundColor: '#fff0f0' },
+  statusSuccess: { backgroundColor: '#f0f8e0' },
+  statusInfo: { backgroundColor: '#eef3ff' },
+  statusText: {
+    flex: 1,
+    fontFamily: 'Manrope-Medium',
+    fontSize: 13,
+    color: '#1c1c18',
+    lineHeight: 18,
   },
 
   forgotBtn: {

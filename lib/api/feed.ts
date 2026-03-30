@@ -26,11 +26,12 @@ export type FeedPost = {
     city: string | null;
     cover_image_url: string | null;
     cuisine: string | null;
-    price_level: string | null;
+    price_level: number | null;  // integer 1–4 in DB, convert with extractPriceLabel() for display
   };
-  dishes: { name: string; highlighted: boolean; position: number }[];
-  photos: { photo_url: string; type: 'restaurant' | 'dish' }[];
+  dishes: { id: string; name: string; highlighted: boolean; position: number }[];
+  photos: { photo_url: string; type: 'restaurant' | 'dish'; dish_id: string | null }[];
   tags: { tagged_user: { id: string; name: string; avatar_url: string | null } }[];
+  reactions: { id: string; emoji: string; user_id: string }[];
 };
 
 // Feed: visits from followed + mutual friends, mutuos first then chronological
@@ -41,7 +42,7 @@ export async function getFeed(
   // Get all outgoing relationships (following + mutual)
   const { data: rels, error: relsError } = await supabase
     .from('relationships')
-    .select('target_id, type')
+    .select('target_id, type, affinity_score')
     .eq('user_id', currentUserId)
     .in('type', ['following', 'mutual']);
 
@@ -52,6 +53,11 @@ export async function getFeed(
   const mutualSet = new Set(
     (rels ?? []).filter((r) => r.type === 'mutual').map((r) => r.target_id)
   );
+
+  const affinityMap = new Map<string, number>();
+  for (const r of (rels ?? [])) {
+    if (r.affinity_score != null) affinityMap.set(r.target_id, r.affinity_score);
+  }
 
   // Always include own posts in "Para ti"
   const queryIds = [...new Set([...followingIds, currentUserId])];
@@ -69,11 +75,12 @@ export async function getFeed(
       user_id,
       user:users!user_id (id, name, avatar_url),
       restaurant:restaurants!restaurant_id (id, name, chain_name, neighborhood, city, cover_image_url, cuisine, price_level),
-      dishes:visit_dishes (name, highlighted, position),
-      photos:visit_photos!visit_id (photo_url, type),
+      dishes:visit_dishes (id, name, highlighted, position),
+      photos:visit_photos!visit_id (photo_url, type, dish_id),
       tags:visit_tags (
         tagged_user:users!tagged_user_id (id, name, avatar_url)
-      )
+      ),
+      reactions:reactions (id, emoji, user_id)
     `)
     .in('user_id', queryIds)
     .in('visibility', ['friends', 'private'])
@@ -88,10 +95,28 @@ export async function getFeed(
     is_mutual: p.user_id === currentUserId || mutualSet.has(p.user_id),
   }));
 
-  posts.sort((a, b) => {
-    if (a.is_mutual !== b.is_mutual) return a.is_mutual ? -1 : 1;
-    return new Date(b.visited_at).getTime() - new Date(a.visited_at).getTime();
-  });
+  // Algorithmic feed score: affinity × quality × recency
+  const now = Date.now();
+  function feedScore(p: any): number {
+    // Affinity factor (0-1): higher affinity friends rank higher
+    const affinity = affinityMap.get(p.user_id) ?? (p.is_mutual ? 50 : 20);
+    const affinityFactor = affinity / 100;
+
+    // Quality factor (0-1): higher rank_score = better content
+    const quality = p.rank_score != null ? p.rank_score / 10 : 0.5;
+
+    // Recency decay: posts lose ~50% value per day
+    const hoursAgo = (now - new Date(p.visited_at).getTime()) / (1000 * 60 * 60);
+    const recency = 1 / (1 + hoursAgo / 24);
+
+    // Own posts always on top
+    if (p.user_id === currentUserId) return 1000 + recency;
+
+    // Combined score: weighted sum
+    return (affinityFactor * 0.35) + (quality * 0.25) + (recency * 0.40);
+  }
+
+  posts.sort((a, b) => feedScore(b) - feedScore(a));
 
   return posts as unknown as FeedPost[];
 }
@@ -113,8 +138,8 @@ export async function getUserFeed(
       visibility,
       user:users!user_id (id, name, avatar_url),
       restaurant:restaurants!restaurant_id (id, name, chain_name, neighborhood, city, cover_image_url, cuisine, price_level),
-      dishes:visit_dishes (name, highlighted, position),
-      photos:visit_photos!visit_id (photo_url, type),
+      dishes:visit_dishes (id, name, highlighted, position),
+      photos:visit_photos!visit_id (photo_url, type, dish_id),
       tags:visit_tags (
         tagged_user:users!tagged_user_id (id, name, avatar_url)
       )

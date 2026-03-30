@@ -8,10 +8,10 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
 } from 'react-native';
 import { router } from 'expo-router';
+import { showAlert } from '../../lib/utils/alerts';
 import { useState, useEffect, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
@@ -161,7 +161,7 @@ export default function EditProfileScreen() {
         setHandleStatus('taken');
         setHandleError('Este handle ya está en uso.');
       } else {
-        Alert.alert('Error al guardar', e?.message ?? 'Inténtalo de nuevo.');
+        showAlert('Error al guardar', e?.message ?? 'Inténtalo de nuevo.');
       }
     } finally {
       setSaving(false);

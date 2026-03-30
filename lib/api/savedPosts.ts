@@ -30,9 +30,9 @@ export async function getSavedPosts(userId: string) {
         note,
         rank_score,
         user:users!user_id (id, name, avatar_url),
-        restaurant:restaurants!restaurant_id (id, name, neighborhood, city, cover_image_url),
-        dishes:visit_dishes!visit_id (name, highlighted, position),
-        photos:visit_photos!visit_id (photo_url, type)
+        restaurant:restaurants!restaurant_id (id, name, chain_name, brand_name, neighborhood, city, cover_image_url, cuisine, price_level),
+        dishes:visit_dishes!visit_id (id, name, highlighted, position),
+        photos:visit_photos!visit_id (photo_url, type, dish_id)
       )
     `)
     .eq('user_id', userId)

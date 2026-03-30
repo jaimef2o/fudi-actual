@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { supabase } from '../supabase';
 import type { UserRow, RelationshipRow } from '../database.types';
+import { notifyNewFollower } from './notificationTriggers';
 
 // ─── Handle utilities ──────────────────────────────────────────────────────
 
@@ -168,6 +169,13 @@ export async function followUser(userId: string, targetId: string) {
       { onConflict: 'user_id,target_id' }
     );
   if (error) throw error;
+
+  // Fire-and-forget: notify the target user
+  supabase.from('users').select('name').eq('id', userId).single()
+    .then(({ data }) => {
+      if (data?.name) notifyNewFollower(data.name, targetId).catch(() => {});
+    })
+    .catch(() => {});
 }
 
 // Unfollow: just delete own row — no cross-user update needed

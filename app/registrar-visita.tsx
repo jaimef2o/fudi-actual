@@ -7,21 +7,38 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
-  Alert,
   Image,
   KeyboardAvoidingView,
   Keyboard,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { showAlert } from '../lib/utils/alerts';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../store';
 import { useCreateVisit, useRestaurantExistingScore } from '../lib/hooks/useVisit';
 import { useProfile } from '../lib/hooks/useProfile';
 import { searchUsers } from '../lib/api/users';
-import { searchPlaces, getPlaceDetails, getPhotoUrl, extractNeighborhood, type PlaceCandidate } from '../lib/api/places';
+import { searchPlaces, getPlaceDetails, resolvePhotoUrl, extractNeighborhood, type PlaceCandidate } from '../lib/api/places';
 import { upsertRestaurant, getRestaurant } from '../lib/api/restaurants';
 import { pickImage, compressAndUpload } from '../lib/storage';
+import { supabase } from '../lib/supabase';
+
+const CUISINE_OPTIONS = [
+  'Española & Tapas',
+  'Italiana & Pizza',
+  'Asiática',
+  'Mexicana',
+  'Latinoamericana',
+  'Árabe & Turca',
+  'Mariscos & Pescados',
+  'Carne & Parrilla',
+  'Americana & Burgers',
+  'Brunch & Desayunos',
+  'Ensaladas & Saludable',
+  'Fusión',
+  'Otra',
+];
 
 const SENTIMENTS = [
   { key: 'loved' as const, icon: 'favorite' as const, label: 'Me encantó', color: '#c7ef48', textColor: '#032417', iconColor: '#032417' },
@@ -62,6 +79,8 @@ export default function RegistrarVisitaScreen() {
   const [loadingRestaurant, setLoadingRestaurant] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectedCuisine, setSelectedCuisine] = useState<string | null>(null);
+  const [restaurantCuisine, setRestaurantCuisine] = useState<string | null>(null);
 
   // Check if this restaurant is already in the user's ranking
   const { data: existingRank } = useRestaurantExistingScore(currentUser?.id, selectedRestaurant?.id);
@@ -77,6 +96,7 @@ export default function RegistrarVisitaScreen() {
         if (r) {
           setSelectedRestaurant({ id: r.id, name: r.name });
           setRestaurantQuery(r.name);
+          setRestaurantCuisine((r as any).cuisine ?? null);
         }
       })
       .catch(() => {
@@ -104,15 +124,19 @@ export default function RegistrarVisitaScreen() {
   }, [restaurantQuery, selectedRestaurant, userCity]);
 
   async function handleSelectPlace(candidate: PlaceCandidate) {
+    if (!candidate.place_id) {
+      showAlert('Restaurante no identificado', 'No se pudo identificar este resultado. Busca el nombre del restaurante directamente.');
+      return;
+    }
     setShowSuggestions(false);
     setLoadingRestaurant(true);
     try {
       const details = await getPlaceDetails(candidate.place_id);
-      if (!details) throw new Error('No se pudieron obtener los detalles del lugar.');
+      if (!details) throw new Error(`No se encontraron datos para "${candidate.structured_formatting.main_text}". Inténtalo de nuevo.`);
 
       const neighborhood = extractNeighborhood(candidate.structured_formatting.secondary_text);
       const coverPhotoUrl = details.photos?.[0]
-        ? getPhotoUrl(details.photos[0].photo_reference)
+        ? await resolvePhotoUrl(details.photos[0].photo_reference)
         : undefined;
 
       const restaurant = await upsertRestaurant({
@@ -124,13 +148,14 @@ export default function RegistrarVisitaScreen() {
         lat: details.geometry.location.lat,
         lng: details.geometry.location.lng,
         price_level: details.price_level,
-        cover_image_url: coverPhotoUrl,
+        cover_image_url: coverPhotoUrl ?? undefined,
       });
 
       setSelectedRestaurant({ id: restaurant.id, name: details.name });
       setRestaurantQuery(details.name);
+      setRestaurantCuisine((restaurant as any).cuisine ?? null);
     } catch (e: any) {
-      Alert.alert('Error', e.message ?? 'No se pudo seleccionar el restaurante.');
+      showAlert('Error', e.message ?? 'No se pudo seleccionar el restaurante.');
     } finally {
       setLoadingRestaurant(false);
     }
@@ -142,6 +167,8 @@ export default function RegistrarVisitaScreen() {
     setSuggestions([]);
     setAddedDishes([]);
     setDishInputValue('');
+    setSelectedCuisine(null);
+    setRestaurantCuisine(null);
   }
 
   function addDishToList(name: string) {
@@ -174,7 +201,7 @@ export default function RegistrarVisitaScreen() {
 
   async function handleAddPhoto() {
     if (photos.length >= 5) {
-      Alert.alert('Máximo de fotos', 'Puedes añadir hasta 5 fotos por visita.');
+      showAlert('Máximo de fotos', 'Puedes añadir hasta 5 fotos por visita.');
       return;
     }
     const uri = await pickImage({ aspect: [4, 3], allowsEditing: true, quality: 0.8 });
@@ -187,15 +214,15 @@ export default function RegistrarVisitaScreen() {
 
   async function handleSubmit() {
     if (!currentUser) {
-      Alert.alert('Error', 'Debes estar autenticado para registrar una visita.');
+      showAlert('Error', 'Debes estar autenticado para registrar una visita.');
       return;
     }
     if (!selectedRestaurant) {
-      Alert.alert('Falta el restaurante', 'Selecciona un restaurante antes de continuar.');
+      showAlert('Falta el restaurante', 'Selecciona un restaurante antes de continuar.');
       return;
     }
     if (!sentiment) {
-      Alert.alert('Falta tu valoración', 'Elige cómo estuvo la visita antes de continuar.');
+      showAlert('Falta tu valoración', 'Elige cómo estuvo la visita antes de continuar.');
       return;
     }
 
@@ -205,7 +232,7 @@ export default function RegistrarVisitaScreen() {
     const pendingDish = dishInputValue.trim();
     let finalDishes = addedDishes;
     if (pendingDish && !addedDishes.some((d) => d.name.toLowerCase() === pendingDish.toLowerCase())) {
-      finalDishes = [...addedDishes, { name: pendingDish, highlighted: false }];
+      finalDishes = [...addedDishes, { name: pendingDish, highlighted: false, photo: null }];
       setAddedDishes(finalDishes);
       setDishInputValue('');
     }
@@ -252,13 +279,23 @@ export default function RegistrarVisitaScreen() {
         tagged_user_ids: taggedUserIds.length > 0 ? taggedUserIds : undefined,
       });
 
+      // Backfill cuisine if user suggested one and restaurant lacks it
+      if (selectedCuisine && selectedRestaurant.id) {
+        supabase
+          .from('restaurants')
+          .update({ cuisine: selectedCuisine })
+          .eq('id', selectedRestaurant.id)
+          .is('cuisine', null)
+          .then(() => {});
+      }
+
       router.navigate(
         `/comparison/${visit.id}?restaurantName=${encodeURIComponent(selectedRestaurant.name)}&sentiment=${sentiment}`
       );
     } catch (e: any) {
       setUploading(false);
       const msg = e?.message ?? e?.error_description ?? JSON.stringify(e) ?? 'Error desconocido';
-      Alert.alert('Error al guardar', msg, [{ text: 'OK' }]);
+      showAlert('Error al guardar', msg, [{ text: 'OK' }]);
     }
   }
 
@@ -276,7 +313,7 @@ export default function RegistrarVisitaScreen() {
           onPress={() => {
             const hasData = selectedRestaurant || sentiment || note.trim() || addedDishes.length > 0 || photos.length > 0 || dishInputValue.trim().length > 0;
             if (!hasData) { router.back(); return; }
-            Alert.alert(
+            showAlert(
               'Descartar cambios',
               '¿Seguro que quieres salir? Perderás los datos introducidos.',
               [
@@ -297,6 +334,7 @@ export default function RegistrarVisitaScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="always"
+        keyboardDismissMode="interactive"
       >
         {/* RESTAURANTE */}
         <View style={styles.section}>
@@ -570,6 +608,41 @@ export default function RegistrarVisitaScreen() {
             })}
           </View>
         </View>
+
+        {/* CUISINE SUGGESTION — only show if restaurant has no cuisine */}
+        {selectedRestaurant && !restaurantCuisine && (
+          <View style={styles.section}>
+            <View style={{ gap: 12 }}>
+              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 11, color: '#727973', textTransform: 'uppercase', letterSpacing: 2 }}>
+                TIPO DE COCINA (opcional)
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 20 }}>
+                {CUISINE_OPTIONS.map((cuisine) => (
+                  <TouchableOpacity
+                    key={cuisine}
+                    onPress={() => setSelectedCuisine(selectedCuisine === cuisine ? null : cuisine)}
+                    style={{
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
+                      borderRadius: 20,
+                      backgroundColor: selectedCuisine === cuisine ? '#c7ef48' : '#f1ede6',
+                      borderWidth: 1,
+                      borderColor: selectedCuisine === cuisine ? '#aed52e' : 'transparent',
+                    }}
+                  >
+                    <Text style={{
+                      fontFamily: selectedCuisine === cuisine ? 'Manrope-Bold' : 'Manrope-Medium',
+                      fontSize: 13,
+                      color: selectedCuisine === cuisine ? '#546b00' : '#424844',
+                    }}>
+                      {cuisine}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        )}
 
         {/* ACOMPAÑANTES */}
         <View style={styles.section}>

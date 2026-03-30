@@ -6,6 +6,8 @@ import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAppStore } from '../store';
 import { useSavedPosts } from '../lib/hooks/useVisit';
+import { getDisplayName } from '../lib/utils/restaurantName';
+import { extractPriceLabel } from '../lib/api/places';
 
 export default function SavedPostsScreen() {
   const currentUser = useAppStore((s) => s.currentUser);
@@ -82,10 +84,10 @@ export default function SavedPostsScreen() {
 
                 {/* Restaurant */}
                 <Text style={styles.restaurantName} numberOfLines={1}>
-                  {item.restaurant?.name ?? '—'}
+                  {item.restaurant ? getDisplayName(item.restaurant as any, 'ranking') : '—'}
                 </Text>
                 {(item.restaurant?.cuisine || item.restaurant?.price_level) ? (
-                  <Text style={styles.meta}>{[item.restaurant.cuisine, item.restaurant.price_level ? '€'.repeat(item.restaurant.price_level) : null].filter(Boolean).join(' · ')}</Text>
+                  <Text style={styles.meta}>{[item.restaurant.cuisine, extractPriceLabel(item.restaurant.price_level) ?? item.restaurant.price_level].filter(Boolean).join(' · ')}</Text>
                 ) : null}
 
                 {/* Note */}

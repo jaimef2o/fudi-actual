@@ -16,6 +16,7 @@ import { useUserRanking, useUpdateVisitRank } from '../../lib/hooks/useVisit';
 import { recomputeRankPositions, SCORE_BRACKETS } from '../../lib/api/visits';
 import { scorePalette } from '../../lib/sentimentColors';
 import { getDisplayName } from '../../lib/utils/restaurantName';
+import { extractPriceLabel } from '../../lib/api/places';
 import { useQueryClient } from '@tanstack/react-query';
 
 const PLACEHOLDER_IMAGE = 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600&auto=format&fit=crop';
@@ -319,7 +320,7 @@ export default function ComparisonScreen() {
               <View style={styles.cardInfo}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cardName}>{getDisplayName(compareWith.restaurant as any, 'ranking')}</Text>
-                  <Text style={styles.cardLocation}>{[(compareWith.restaurant as any).cuisine, (compareWith.restaurant as any).price_level ? '€'.repeat((compareWith.restaurant as any).price_level) : null].filter(Boolean).join(' · ')}</Text>
+                  <Text style={styles.cardLocation}>{[(compareWith.restaurant as any).cuisine, extractPriceLabel((compareWith.restaurant as any).price_level) ?? (compareWith.restaurant as any).price_level].filter(Boolean).join(' · ')}</Text>
                 </View>
                 {compareWith.rank_score != null && (() => {
                     const pal = scorePalette(compareWith.rank_score);

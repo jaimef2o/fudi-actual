@@ -3,10 +3,10 @@ import { matchChain, getChainName } from '../chains';
 /**
  * Context-aware display name for restaurants.
  *
- * Rules from CHAIN_CATALOG v2:
- * - 'post' / 'detail' → show full local name ("Grosso Napoletano Malasaña")
- * - 'ranking' / 'search' → show chain brand name ("Grosso Napoletano")
- * - Independent restaurants → always show restaurant.name as-is
+ * All contexts now use the chain brand name when available.
+ * For chains, shows the canonical brand name ("Hundred Burgers") instead of
+ * the raw Google Places name ("Hundreds Juan Bravo").
+ * Independent restaurants always show restaurant.name as-is.
  *
  * Priority for chain detection:
  * 1. chain_name column (pre-resolved slug from catalog, stored in DB)
@@ -23,12 +23,6 @@ export function getDisplayName(
   },
   context: DisplayContext = 'post'
 ): string {
-  // For posts and detail views, always show the full local name
-  if (context === 'post' || context === 'detail') {
-    return restaurant.name;
-  }
-
-  // For ranking and search, show the chain brand name if it's a chain
   // 1. Try chain_name column (pre-resolved)
   if (restaurant.chain_name) {
     const brandName = getChainName(restaurant.chain_name);
