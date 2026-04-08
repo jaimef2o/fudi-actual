@@ -30,7 +30,8 @@ import { COLORS } from '../../lib/theme/colors';
 
 // ── DATA ────────────────────────────────────────────────────────────────────
 
-const SORT_OPTIONS = ['Más reciente', 'Mejor valorado', 'Nombre A-Z'];
+const SORT_OPTIONS_HISTORICO = ['Mejor valorado', 'Más reciente', 'Nombre A-Z'];
+const SORT_OPTIONS_GUARDADOS = ['Recientes', 'Amigos', 'Global', 'A-Z'];
 
 // ── CIRCULAR SCORE ───────────────────────────────────────────────────────────
 
@@ -95,8 +96,10 @@ const fsStyles = StyleSheet.create({
 export default function ListasScreen() {
   const [activeTab, setActiveTab] = useState<'ranking' | 'guardados'>('ranking');
   const [search, setSearch] = useState('');
-  const [activeSort, setActiveSort] = useState('Más reciente');
+  const [activeSort, setActiveSort] = useState('Mejor valorado');
   const [sortOpen, setSortOpen] = useState(false);
+  const sortOptions = activeTab === 'guardados' ? SORT_OPTIONS_GUARDADOS : SORT_OPTIONS_HISTORICO;
+  const defaultSort = activeTab === 'guardados' ? 'Recientes' : 'Mejor valorado';
   const currentUser = useAppStore((s) => s.currentUser);
   const queryClient = useQueryClient();
   const { data: rankingData, isLoading: loadingRanking, refetch: refetchRanking } = useUserRanking(currentUser?.id);
@@ -168,6 +171,11 @@ export default function ListasScreen() {
     city: (item.restaurant?.city ?? '') as string,
     image: item.restaurant?.cover_image_url ?? null,
     savedAt: item.added_at ? timeAgoSaved(item.added_at) : '',
+    addedAtRaw: item.added_at ?? '',
+    friendAvgScore: item.friendAvgScore as number | null,
+    globalAvgScore: item.globalAvgScore as number | null,
+    friendVisitCount: item.friendVisitCount as number ?? 0,
+    globalVisitCount: item.globalVisitCount as number ?? 0,
   }));
 
   const filteredGuardados = savedItems
@@ -182,8 +190,10 @@ export default function ListasScreen() {
       return matchSearch && matchCity && matchNeighborhood && matchPrice;
     })
     .sort((a: any, b: any) => {
-      if (activeSort === 'Nombre A-Z') return a.name.localeCompare(b.name);
-      return 0; // Más reciente — keep original order (most recently saved first)
+      if (activeSort === 'A-Z') return a.name.localeCompare(b.name);
+      if (activeSort === 'Amigos') return (b.friendAvgScore ?? 0) - (a.friendAvgScore ?? 0);
+      if (activeSort === 'Global') return (b.globalAvgScore ?? 0) - (a.globalAvgScore ?? 0);
+      return 0; // Recientes — keep original order (most recently saved first)
     });
 
   // Map real ranking data to display format
@@ -259,7 +269,7 @@ export default function ListasScreen() {
           <View style={styles.tabsContainer}>
             <TouchableOpacity
               style={[styles.tab, activeTab === 'ranking' && styles.tabActive]}
-              onPress={() => { setActiveTab('ranking'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); }}
+              onPress={() => { setActiveTab('ranking'); setActiveSort('Mejor valorado'); setSortOpen(false); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); }}
             >
               <MaterialIcons
                 name="format-list-numbered"
@@ -272,7 +282,7 @@ export default function ListasScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tab, activeTab === 'guardados' && styles.tabActive]}
-              onPress={() => { setActiveTab('guardados'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); }}
+              onPress={() => { setActiveTab('guardados'); setActiveSort('Recientes'); setSortOpen(false); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); }}
             >
               <MaterialIcons
                 name="bookmark"
@@ -431,13 +441,13 @@ export default function ListasScreen() {
             {/* Controls row */}
             <View style={styles.controlsRow}>
               <TouchableOpacity
-                style={[styles.controlBtn, activeSort !== 'Más reciente' && styles.controlBtnActive]}
+                style={[styles.controlBtn, activeSort !== defaultSort && styles.controlBtnActive]}
                 onPress={() => setSortOpen(!sortOpen)}
                 activeOpacity={0.75}
               >
-                <MaterialIcons name="swap-vert" size={15} color={activeSort !== 'Más reciente' ? COLORS.onSecondaryContainer : COLORS.onSurfaceVariant} />
-                <Text style={[styles.controlBtnText, activeSort !== 'Más reciente' && styles.controlBtnTextActive]}>
-                  {activeSort === 'Más reciente' ? 'Ordenar' : activeSort === 'Mejor valorado' ? 'Valoración' : 'A-Z'}
+                <MaterialIcons name="swap-vert" size={15} color={activeSort !== defaultSort ? COLORS.onSecondaryContainer : COLORS.onSurfaceVariant} />
+                <Text style={[styles.controlBtnText, activeSort !== defaultSort && styles.controlBtnTextActive]}>
+                  {activeSort === defaultSort ? 'Ordenar' : activeSort}
                 </Text>
               </TouchableOpacity>
 
@@ -452,12 +462,12 @@ export default function ListasScreen() {
                 <MaterialIcons name="tune" size={15} color={totalFilters > 0 ? COLORS.onSecondaryContainer : COLORS.onSurfaceVariant} />
               </TouchableOpacity>
 
-              {(totalFilters > 0 || search.trim().length > 0 || activeSort !== 'Más reciente') && (
+              {(totalFilters > 0 || search.trim().length > 0 || activeSort !== defaultSort) && (
                 <TouchableOpacity
                   style={styles.clearBtn}
-                  onPress={() => { setAppliedFilters({ ...EMPTY_FILTERS }); setSearch(''); setActiveSort('Más reciente'); }}
+                  onPress={() => { setAppliedFilters({ ...EMPTY_FILTERS }); setSearch(''); setActiveSort(defaultSort); }}
                 >
-                  <MaterialIcons name="close" size={14} color="#546b00" />
+                  <MaterialIcons name="close" size={14} color={COLORS.onSecondaryContainer} />
                 </TouchableOpacity>
               )}
             </View>
@@ -465,7 +475,7 @@ export default function ListasScreen() {
             {/* Sort dropdown */}
             {sortOpen && (
               <View style={styles.sortDropdown}>
-                {SORT_OPTIONS.map((opt) => (
+                {sortOptions.map((opt) => (
                   <TouchableOpacity
                     key={opt}
                     style={[styles.sortOption, activeSort === opt && styles.sortOptionActive]}
@@ -475,7 +485,7 @@ export default function ListasScreen() {
                       {opt}
                     </Text>
                     {activeSort === opt && (
-                      <MaterialIcons name="check" size={16} color="#546b00" />
+                      <MaterialIcons name="check" size={16} color={COLORS.onSecondaryContainer} />
                     )}
                   </TouchableOpacity>
                 ))}
@@ -564,17 +574,35 @@ export default function ListasScreen() {
                         <MaterialIcons name="restaurant" size={22} color={COLORS.outlineVariant} />
                       </View>
                     )}
-                    <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1, marginRight: 8 }}>
                       <Text style={styles.savedName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
                       {item.neighborhood ? (
                         <Text style={styles.savedNeighborhood} numberOfLines={1}>{item.neighborhood}</Text>
                       ) : null}
                       {(item.cuisine || item.price) ? (
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5 }}>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 2 }}>
                           <InfoTag value={item.cuisine} />
                           <InfoTag value={item.price} />
                         </View>
                       ) : null}
+                      {/* Scores row */}
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                        {item.friendAvgScore != null && (
+                          <View style={styles.savedScorePill}>
+                            <MaterialIcons name="people" size={11} color={COLORS.onSecondaryContainer} />
+                            <Text style={styles.savedScoreText}>{item.friendAvgScore.toFixed(1)}</Text>
+                          </View>
+                        )}
+                        {item.globalAvgScore != null && (
+                          <View style={[styles.savedScorePill, styles.savedScorePillGlobal]}>
+                            <MaterialIcons name="public" size={11} color={COLORS.outline} />
+                            <Text style={[styles.savedScoreText, styles.savedScoreTextGlobal]}>{item.globalAvgScore.toFixed(1)}</Text>
+                          </View>
+                        )}
+                        {item.friendAvgScore == null && item.globalAvgScore == null && (
+                          <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 11, color: COLORS.outlineVariant }}>Sin valoraciones</Text>
+                        )}
+                      </View>
                     </View>
                     <View style={styles.savedRight}>
                       <Text style={styles.savedDate}>{item.savedAt}</Text>
@@ -1018,15 +1046,30 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   savedScoreBadge: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
   },
+  savedScorePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: COLORS.secondaryContainer,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  savedScorePillGlobal: {
+    backgroundColor: COLORS.surfaceContainerHigh,
+  },
   savedScoreText: {
     fontFamily: 'NotoSerif-Bold',
-    fontSize: 15,
-    color: '#546b00',
+    fontSize: 12,
+    color: COLORS.onSecondaryContainer,
+  },
+  savedScoreTextGlobal: {
+    color: COLORS.onSurfaceVariant,
   },
   savedDate: {
     fontFamily: 'Manrope-Regular',

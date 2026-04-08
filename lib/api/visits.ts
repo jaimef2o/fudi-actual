@@ -690,6 +690,7 @@ export async function getSavedRestaurants(userId: string) {
     .from('list_items')
     .select(`
       added_at,
+      restaurant_id,
       restaurant:restaurants!restaurant_id (
         id, name, chain_name, brand_name, neighborhood, city, cuisine, price_level, cover_image_url
       )
@@ -698,7 +699,50 @@ export async function getSavedRestaurants(userId: string) {
     .order('added_at', { ascending: false });
 
   if (error) throw error;
-  return data ?? [];
+  const items = data ?? [];
+  if (items.length === 0) return [];
+
+  // Get friend IDs for friend scores
+  const { data: rels } = await supabase
+    .from('relationships')
+    .select('target_id')
+    .eq('user_id', userId)
+    .in('type', ['mutual', 'following']);
+  const friendIds = (rels ?? []).map((r) => r.target_id);
+
+  // Fetch all visit scores for saved restaurants in one query
+  const restaurantIds = items.map((i: any) => i.restaurant_id).filter(Boolean);
+  const { data: allVisits } = await supabase
+    .from('visits')
+    .select('restaurant_id, user_id, rank_score')
+    .in('restaurant_id', restaurantIds)
+    .not('rank_score', 'is', null);
+
+  // Compute friend avg and global avg per restaurant
+  const scoreMap: Record<string, { friendTotal: number; friendCount: number; globalTotal: number; globalCount: number }> = {};
+  for (const v of (allVisits ?? [])) {
+    const rid = v.restaurant_id as string;
+    const score = v.rank_score as number;
+    if (!scoreMap[rid]) scoreMap[rid] = { friendTotal: 0, friendCount: 0, globalTotal: 0, globalCount: 0 };
+    scoreMap[rid].globalTotal += score;
+    scoreMap[rid].globalCount += 1;
+    if (friendIds.includes(v.user_id as string)) {
+      scoreMap[rid].friendTotal += score;
+      scoreMap[rid].friendCount += 1;
+    }
+  }
+
+  return items.map((item: any) => {
+    const rid = item.restaurant_id ?? item.restaurant?.id;
+    const s = scoreMap[rid];
+    return {
+      ...item,
+      friendAvgScore: s && s.friendCount > 0 ? Math.round((s.friendTotal / s.friendCount) * 10) / 10 : null,
+      globalAvgScore: s && s.globalCount > 0 ? Math.round((s.globalTotal / s.globalCount) * 10) / 10 : null,
+      friendVisitCount: s?.friendCount ?? 0,
+      globalVisitCount: s?.globalCount ?? 0,
+    };
+  });
 }
 
 export async function unbookmarkRestaurant(userId: string, restaurantId: string) {
