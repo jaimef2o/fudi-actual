@@ -1,5 +1,29 @@
-// @ts-nocheck
 import { supabase } from '../supabase';
+
+type SavedVisitRow = {
+  visit_id: string;
+  created_at: string;
+  visit: {
+    id: string;
+    visited_at: string;
+    note: string | null;
+    rank_score: number | null;
+    user: { id: string; name: string; avatar_url: string | null };
+    restaurant: {
+      id: string;
+      name: string;
+      chain_name: string | null;
+      brand_name: string | null;
+      neighborhood: string | null;
+      city: string | null;
+      cover_image_url: string | null;
+      cuisine: string | null;
+      price_level: number | null;
+    };
+    dishes: { id: string; name: string; highlighted: boolean; position: number }[];
+    photos: { photo_url: string; type: string; dish_id: string | null }[];
+  } | null;
+};
 
 export async function savePost(userId: string, visitId: string): Promise<void> {
   const { error } = await supabase
@@ -39,7 +63,7 @@ export async function getSavedPosts(userId: string) {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data ?? []).map((row: any) => row.visit).filter(Boolean);
+  return ((data ?? []) as unknown as SavedVisitRow[]).map((row) => row.visit).filter(Boolean);
 }
 
 export async function isPostSaved(userId: string, visitId: string): Promise<boolean> {

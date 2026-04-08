@@ -2,7 +2,6 @@ import {
   View,
   Text,
   ScrollView,
-  Image,
   TouchableOpacity,
   TextInput,
   StyleSheet,
@@ -10,16 +9,19 @@ import {
   Modal,
   ActivityIndicator,
   Share,
+  RefreshControl,
 } from 'react-native';
 import { showAlert } from '../../lib/utils/alerts';
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState, useRef } from 'react';
 import { useAppStore } from '../../store';
+import { COLORS } from '../../lib/theme/colors';
 import {
   useFriends,
   useFollowing,
   useFollowRequests,
+  useNewFollowers,
   useSearchUsers,
   useFollowUser,
   useUnfollowUser,
@@ -29,50 +31,45 @@ import {
 } from '../../lib/hooks/useProfile';
 import { supabase } from '../../lib/supabase';
 import { createInvitation } from '../../lib/api/users';
+import { StaggerItem } from '../../components/Animations';
+import Avatar from '../../components/Avatar';
+import UserCard from '../../components/cards/UserCard';
 
 const SORT_OPTIONS = ['Mayor afinidad', 'Más activos', 'Recientes'] as const;
 type SortOption = typeof SORT_OPTIONS[number];
 
-// ─── Avatar helper ───────────────────────────────────────────────────────────
+// ─── Search result wrapper (hooks live here, UserCard renders) ───────────────
 
-function Avatar({ uri, size = 48, radius }: { uri?: string | null; size?: number; radius?: number }) {
-  const r = radius ?? size / 2;
-  if (uri) return <Image source={{ uri }} style={{ width: size, height: size, borderRadius: r }} />;
-  return (
-    <View style={{ width: size, height: size, borderRadius: r, backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }}>
-      <MaterialIcons name="person" size={size * 0.5} color="#727973" />
-    </View>
-  );
-}
-
-// ─── Search result card (uses real relationship from DB) ──────────────────────
-
-function SearchResultCard({ user, currentUserId }: { user: any; currentUserId: string }) {
+function SearchResultCardWrapper({ user, currentUserId }: { user: { id: string; name: string; handle?: string | null; avatar_url?: string | null; city?: string | null }; currentUserId: string }) {
   const { data: rel, isLoading: loadingRel } = useRelationship(currentUserId, user.id);
   const { mutateAsync: follow, isPending: following } = useFollowUser(currentUserId);
   const { mutateAsync: unfollow, isPending: unfollowing } = useUnfollowUser(currentUserId);
 
-  const relType = rel?.type ?? null; // 'following' | 'mutual' | null
-
-  const label = relType === 'mutual' ? 'Amigos' : relType === 'following' ? 'Siguiendo' : 'Seguir';
-  const isConnected = relType !== null;
-  const busy = following || unfollowing || loadingRel;
+  const relStatus = (rel as string) ?? 'none';
+  const relStyle = relStatus === 'mutual' ? 'mutual' as const
+    : relStatus === 'pending' ? 'pending' as const
+    : relStatus === 'following' ? 'following' as const
+    : 'follow' as const;
+  const isConnected = relStatus !== 'none';
 
   async function handlePress() {
     try {
       if (isConnected) {
-        // Confirm unfollow
+        const isPending = relStatus === 'pending';
         showAlert(
-          'Dejar de seguir',
-          `¿Dejar de seguir a ${user.name}?`,
+          isPending ? 'Cancelar solicitud' : 'Dejar de seguir',
+          isPending
+            ? `¿Cancelar la solicitud a ${user.name}?`
+            : `¿Dejar de seguir a ${user.name}?`,
           [
-            { text: 'Cancelar', style: 'cancel' },
+            { text: 'Volver', style: 'cancel' },
             {
-              text: 'Dejar de seguir',
+              text: isPending ? 'Cancelar solicitud' : 'Dejar de seguir',
               style: 'destructive',
               onPress: async () => {
-                try { await unfollow(user.id); } catch (e: any) {
-                  showAlert('Error', e.message ?? 'No se pudo completar la acción.');
+                try { await unfollow(user.id); } catch (e: unknown) {
+                  const msg = e instanceof Error ? e.message : 'No se pudo completar la acción.';
+                  showAlert('Error', msg);
                 }
               },
             },
@@ -81,105 +78,68 @@ function SearchResultCard({ user, currentUserId }: { user: any; currentUserId: s
       } else {
         await follow(user.id);
       }
-    } catch (e: any) {
-      showAlert('Error', e.message ?? 'No se pudo completar la acción.');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'No se pudo completar la acción.';
+      showAlert('Error', msg);
     }
   }
 
   return (
-    <TouchableOpacity
-      style={styles.searchCard}
-      activeOpacity={0.85}
-      onPress={() => router.push(`/profile/${user.id}`)}
-    >
-      <Avatar uri={user.avatar_url} size={48} />
-      <View style={{ flex: 1 }}>
-        <Text style={styles.searchName} numberOfLines={1}>{user.name}</Text>
-        <Text style={styles.searchHandle} numberOfLines={1}>
-          {user.handle ? `@${user.handle}` : user.city ?? ''}
-        </Text>
-      </View>
-      <TouchableOpacity
-        style={[styles.followBtn, isConnected && styles.followBtnConnected, relType === 'mutual' && styles.followBtnMutual]}
-        onPress={handlePress}
-        disabled={busy}
-        activeOpacity={0.8}
-      >
-        {busy ? (
-          <ActivityIndicator size="small" color={isConnected ? '#546b00' : '#ffffff'} />
-        ) : (
-          <>
-            {relType === 'mutual' && <MaterialIcons name="check" size={13} color="#546b00" style={{ marginRight: 2 }} />}
-            <Text style={[styles.followBtnText, isConnected && styles.followBtnTextConnected]}>{label}</Text>
-          </>
-        )}
-      </TouchableOpacity>
-    </TouchableOpacity>
+    <UserCard
+      user={user}
+      variant="search"
+      relationshipStyle={relStyle}
+      primaryLoading={following || unfollowing || loadingRel}
+      onPrimaryAction={handlePress}
+    />
   );
 }
 
-// ─── Pending follower card (someone follows you, you haven't followed back) ───
+// ─── Follow request wrapper ──────────────────────────────────────────────────
 
-function FollowRequestCard({ requester, currentUserId }: { requester: any; currentUserId: string }) {
+function FollowRequestCardWrapper({ requester, currentUserId }: { requester: { id: string; name: string; handle?: string | null; avatar_url?: string | null; city?: string | null }; currentUserId: string }) {
   const { mutateAsync: follow, isPending: accepting } = useFollowUser(currentUserId);
   const { mutateAsync: reject, isPending: rejecting } = useRejectFollowRequest(currentUserId);
 
-  async function handleAccept() {
-    try {
-      await follow(requester.id);
-    } catch (e: any) {
-      showAlert('Error', e.message ?? 'No se pudo aceptar la solicitud.');
-    }
-  }
+  return (
+    <UserCard
+      user={requester}
+      variant="follow-request"
+      primaryLoading={accepting}
+      secondaryLoading={rejecting}
+      onPrimaryAction={async () => {
+        try { await follow(requester.id); } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : 'No se pudo aceptar la solicitud.';
+          showAlert('Error', msg);
+        }
+      }}
+      onSecondaryAction={async () => {
+        try { await reject(requester.id); } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : 'No se pudo rechazar la solicitud.';
+          showAlert('Error', msg);
+        }
+      }}
+    />
+  );
+}
 
-  async function handleReject() {
-    try {
-      await reject(requester.id);
-    } catch (e: any) {
-      showAlert('Error', e.message ?? 'No se pudo rechazar la solicitud.');
-    }
-  }
+// ─── New follower wrapper ────────────────────────────────────────────────────
+
+function NewFollowerCardWrapper({ follower, currentUserId }: { follower: { id: string; name: string; handle?: string | null; avatar_url?: string | null; city?: string | null }; currentUserId: string }) {
+  const { mutateAsync: follow, isPending } = useFollowUser(currentUserId);
 
   return (
-    <View style={styles.requestCard}>
-      <TouchableOpacity onPress={() => router.push(`/profile/${requester.id}`)} activeOpacity={0.8}>
-        <Avatar uri={requester.avatar_url} size={44} />
-      </TouchableOpacity>
-      <TouchableOpacity style={{ flex: 1 }} onPress={() => router.push(`/profile/${requester.id}`)} activeOpacity={0.8}>
-        <Text style={styles.searchName} numberOfLines={1}>{requester.name}</Text>
-        <Text style={styles.searchHandle}>
-          {requester.handle ? `@${requester.handle}` : requester.city ?? 'Quiere seguirte'}
-        </Text>
-      </TouchableOpacity>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        {/* Reject */}
-        <TouchableOpacity
-          style={styles.rejectBtn}
-          onPress={handleReject}
-          disabled={accepting || rejecting}
-          activeOpacity={0.8}
-        >
-          {rejecting ? (
-            <ActivityIndicator size="small" color="#727973" />
-          ) : (
-            <MaterialIcons name="close" size={16} color="#727973" />
-          )}
-        </TouchableOpacity>
-        {/* Accept */}
-        <TouchableOpacity
-          style={styles.acceptBtn}
-          onPress={handleAccept}
-          disabled={accepting || rejecting}
-          activeOpacity={0.8}
-        >
-          {accepting ? (
-            <ActivityIndicator size="small" color="#546b00" />
-          ) : (
-            <Text style={styles.acceptBtnText}>Seguir</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-    </View>
+    <UserCard
+      user={follower}
+      variant="new-follower"
+      primaryLoading={isPending}
+      onPrimaryAction={async () => {
+        try { await follow(follower.id); } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : 'No se pudo seguir al usuario.';
+          showAlert('Error', msg);
+        }
+      }}
+    />
   );
 }
 
@@ -199,7 +159,7 @@ function FriendCard({ friend, isMutual = true }: { friend: any; isMutual?: boole
         </View>
         {isMutual && friend.affinity > 0 && (
           <View style={[styles.affinityBadge, friend.isHighAffinity ? styles.affinityBadgeHigh : styles.affinityBadgeLow]}>
-            <Text style={[styles.affinityBadgeText, !friend.isHighAffinity && { color: '#727973' }]}>{friend.affinity}%</Text>
+            <Text style={[styles.affinityBadgeText, !friend.isHighAffinity && { color: COLORS.outline }]}>{friend.affinity}%</Text>
           </View>
         )}
       </View>
@@ -214,7 +174,7 @@ function FriendCard({ friend, isMutual = true }: { friend: any; isMutual?: boole
             ) : null}
             {friend.home_city ? (
               <View style={styles.friendCityRow}>
-                <MaterialIcons name="location-on" size={11} color="#727973" />
+                <MaterialIcons name="location-on" size={11} color={COLORS.outline} />
                 <Text style={styles.friendCityText}>{friend.home_city}</Text>
               </View>
             ) : null}
@@ -223,22 +183,30 @@ function FriendCard({ friend, isMutual = true }: { friend: any; isMutual?: boole
         </View>
 
         {/* Stats */}
-        <View style={styles.statsGrid}>
-          <View style={styles.statCell}>
-            <Text style={styles.statLabel}>Visitas</Text>
-            <Text style={styles.statValue}>{friend.visits}</Text>
-          </View>
-          <View style={styles.statCell}>
-            <Text style={styles.statLabel}>Media</Text>
-            <Text style={styles.statValue}>{friend.average > 0 ? friend.average.toFixed(1) : '—'}</Text>
-          </View>
-          <View style={[styles.statCell, friend.isHighAffinity && isMutual && styles.statCellHighlight]}>
-            <Text style={styles.statLabel}>{isMutual ? 'Afinidad' : 'Estado'}</Text>
-            <Text style={[styles.statValue, { fontStyle: 'italic', fontSize: 13 }]}>
-              {isMutual ? (friend.affinity > 0 ? `${friend.affinity}%` : '—') : 'Siguiendo'}
+        {friend.visits === 0 ? (
+          <View style={{ paddingVertical: 8, paddingHorizontal: 4 }}>
+            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 12, color: COLORS.outline, fontStyle: 'italic' }}>
+              {friend.name} aún no ha compartido visitas
             </Text>
           </View>
-        </View>
+        ) : (
+          <View style={styles.statsGrid}>
+            <View style={styles.statCell}>
+              <Text style={styles.statLabel}>Visitas</Text>
+              <Text style={styles.statValue}>{friend.visits}</Text>
+            </View>
+            <View style={styles.statCell}>
+              <Text style={styles.statLabel}>Media</Text>
+              <Text style={styles.statValue}>{friend.average > 0 ? friend.average.toFixed(1) : '—'}</Text>
+            </View>
+            <View style={[styles.statCell, friend.isHighAffinity && isMutual && styles.statCellHighlight]}>
+              <Text style={styles.statLabel}>{isMutual ? 'Afinidad' : 'Estado'}</Text>
+              <Text style={[styles.statValue, { fontStyle: 'italic', fontSize: 13 }]}>
+                {isMutual ? (friend.affinity > 0 ? `${friend.affinity}%` : '—') : 'Siguiendo'}
+              </Text>
+            </View>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -266,14 +234,31 @@ export default function AmigosScreen() {
   const [activeSort, setActiveSort] = useState<SortOption>('Mayor afinidad');
   const [sortOpen, setSortOpen] = useState(false);
   const [inviting, setInviting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
   const currentUser = useAppStore((s) => s.currentUser);
 
-  const { data: realFriends, isLoading: loadingFriends } = useFriends(currentUser?.id);
-  const { data: followingList, isLoading: loadingFollowing } = useFollowing(currentUser?.id);
-  const { data: followRequests, isLoading: loadingRequests } = useFollowRequests(currentUser?.id);
-  const { data: suggestedUsers } = useSuggestedUsers(currentUser?.id);
+  const { data: realFriends, isLoading: loadingFriends, refetch: refetchFriends } = useFriends(currentUser?.id);
+  const { data: followingList, isLoading: loadingFollowing, refetch: refetchFollowing } = useFollowing(currentUser?.id);
+  const { data: followRequests, isLoading: loadingRequests, refetch: refetchRequests } = useFollowRequests(currentUser?.id);
+  const { data: newFollowersData, refetch: refetchNewFollowers } = useNewFollowers(currentUser?.id);
+  const { data: suggestedUsers, refetch: refetchSuggested } = useSuggestedUsers(currentUser?.id);
   const { data: searchResults, isFetching: searching } = useSearchUsers(searchQuery);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        refetchFriends(),
+        refetchFollowing(),
+        refetchRequests(),
+        refetchNewFollowers(),
+        refetchSuggested(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const isSearching = searchQuery.trim().length >= 2;
 
@@ -284,8 +269,8 @@ export default function AmigosScreen() {
     handle: r.friend?.handle ?? null,
     home_city: r.friend?.city ?? '',
     affinity: Math.round(r.affinity_score ?? 0),
-    visits: 0,
-    average: 0,
+    visits: r.visit_count ?? 0,
+    average: r.avg_score ? Number(r.avg_score.toFixed(1)) : 0,
     avatar: r.friend?.avatar_url ?? null,
     isHighAffinity: (r.affinity_score ?? 0) >= 70,
   }));
@@ -310,21 +295,15 @@ export default function AmigosScreen() {
   });
 
   const pendingRequests: any[] = (followRequests ?? []).map((r: any) => r.requester).filter(Boolean);
+  const newFollowersList: any[] = (newFollowersData ?? []).map((r: any) => r.requester).filter(Boolean);
 
   const isLoading = loadingFriends || loadingFollowing || loadingRequests;
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
       {/* Header */}
       <View style={styles.header}>
-        {/* Saved posts icon */}
-        <TouchableOpacity
-          style={{ width: 48, alignItems: 'flex-start' }}
-          onPress={() => router.push('/saved-posts')}
-          activeOpacity={0.8}
-        >
-          <MaterialIcons name="bookmark-border" size={24} color="#032417" />
-        </TouchableOpacity>
+        <View style={{ width: 48 }} />
         <Text style={styles.headerTitle}>Amigos</Text>
         <TouchableOpacity
           style={styles.headerRight}
@@ -348,10 +327,13 @@ export default function AmigosScreen() {
         removeClippedSubviews={true}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={COLORS.primary} colors={[COLORS.primary]} />
+        }
       >
         {/* Search bar */}
         <View style={styles.searchContainer}>
-          <MaterialIcons name="search" size={20} color="#727973" />
+          <MaterialIcons name="search" size={20} color={COLORS.outline} />
           <TextInput
             ref={searchInputRef}
             style={styles.searchInput}
@@ -365,7 +347,7 @@ export default function AmigosScreen() {
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <MaterialIcons name="close" size={18} color="#727973" />
+              <MaterialIcons name="close" size={18} color={COLORS.outline} />
             </TouchableOpacity>
           )}
         </View>
@@ -375,18 +357,18 @@ export default function AmigosScreen() {
           <View style={{ marginBottom: 24 }}>
             <SectionLabel text="RESULTADOS" />
             {searching ? (
-              <ActivityIndicator size="small" color="#032417" style={{ marginTop: 16 }} />
+              <ActivityIndicator size="small" color={COLORS.primary} style={{ marginTop: 16 }} />
             ) : searchResults && (searchResults as any[]).filter((u: any) => u.id !== currentUser?.id).length > 0 ? (
               <View style={{ gap: 10 }}>
                 {(searchResults as any[])
                   .filter((u: any) => u.id !== currentUser?.id)
                   .map((user: any) => (
-                    <SearchResultCard key={user.id} user={user} currentUserId={currentUser?.id ?? ''} />
+                    <SearchResultCardWrapper key={user.id} user={user} currentUserId={currentUser?.id ?? ''} />
                   ))}
               </View>
             ) : (
               <View style={styles.emptySearch}>
-                <MaterialIcons name="person-search" size={36} color="#c1c8c2" />
+                <MaterialIcons name="person-search" size={36} color={COLORS.outlineVariant} />
                 <Text style={styles.emptySearchText}>Sin resultados para "{searchQuery}"</Text>
                 <Text style={styles.emptySearchHint}>Prueba con el nombre completo o el handle</Text>
               </View>
@@ -398,7 +380,7 @@ export default function AmigosScreen() {
         {!isSearching && (
           <>
             {isLoading && (
-              <ActivityIndicator size="large" color="#032417" style={{ marginVertical: 32 }} />
+              <ActivityIndicator size="large" color={COLORS.primary} style={{ marginVertical: 32 }} />
             )}
 
             {/* Solicitudes pendientes */}
@@ -407,7 +389,19 @@ export default function AmigosScreen() {
                 <SectionLabel text="SOLICITUDES" count={pendingRequests.length} />
                 <View style={{ gap: 10 }}>
                   {pendingRequests.map((req: any) => (
-                    <FollowRequestCard key={req.id} requester={req} currentUserId={currentUser?.id ?? ''} />
+                    <FollowRequestCardWrapper key={req.id} requester={req} currentUserId={currentUser?.id ?? ''} />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Nuevos seguidores (public users who followed you) */}
+            {!isLoading && newFollowersList.length > 0 && (
+              <View style={styles.section}>
+                <SectionLabel text="NUEVOS SEGUIDORES" count={newFollowersList.length} />
+                <View style={{ gap: 10 }}>
+                  {newFollowersList.map((follower: any) => (
+                    <NewFollowerCardWrapper key={follower.id} follower={follower} currentUserId={currentUser?.id ?? ''} />
                   ))}
                 </View>
               </View>
@@ -421,14 +415,14 @@ export default function AmigosScreen() {
                   {sortedFriends.length > 0 && (
                     <TouchableOpacity style={styles.sortTriggerSmall} onPress={() => setSortOpen(true)} activeOpacity={0.75}>
                       <Text style={styles.sortTriggerSmallText}>{activeSort}</Text>
-                      <MaterialIcons name="expand-more" size={16} color="#032417" />
+                      <MaterialIcons name="expand-more" size={16} color={COLORS.primary} />
                     </TouchableOpacity>
                   )}
                 </View>
 
                 {sortedFriends.length === 0 ? (
                   <View style={styles.emptySection}>
-                    <MaterialIcons name="group-add" size={40} color="#c1c8c2" />
+                    <MaterialIcons name="group-add" size={40} color={COLORS.outlineVariant} />
                     <Text style={styles.emptySectionTitle}>Aún no tienes amigos</Text>
                     <Text style={styles.emptySectionText}>
                       Búscalos por nombre o @handle en el buscador de arriba, o invítalos con un enlace personal.
@@ -441,14 +435,16 @@ export default function AmigosScreen() {
                         setTimeout(() => searchInputRef.current?.focus(), 100);
                       }}
                     >
-                      <MaterialIcons name="search" size={15} color="#ffffff" />
+                      <MaterialIcons name="search" size={15} color={COLORS.onPrimary} />
                       <Text style={styles.emptyCtaBtnText}>Buscar personas</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <View style={{ gap: 20 }}>
-                    {sortedFriends.map((friend) => (
-                      <FriendCard key={friend.id} friend={friend} isMutual />
+                    {sortedFriends.map((friend, idx) => (
+                      <StaggerItem key={friend.id} index={idx} staggerMs={60}>
+                        <FriendCard friend={friend} isMutual />
+                      </StaggerItem>
                     ))}
                   </View>
                 )}
@@ -473,14 +469,14 @@ export default function AmigosScreen() {
                       if (!u?.id) return;
                       setInviting(true);
                       const inv = await createInvitation(u.id);
-                      const link = `https://fudi.app/invite/${inv.token}`;
+                      const link = `https://savry.app/invite/${inv.token}`;
                       await Share.share({
-                        message: `${u.name ?? 'Alguien'} te invita a fudi — el círculo gastronómico privado. Únete aquí: ${link}`,
+                        message: `${u.name ?? 'Alguien'} te invita a savry — el círculo gastronómico privado. Únete aquí: ${link}`,
                         url: link,
                       });
                     } catch {
                       await Share.share({
-                        message: 'Únete a fudi — el círculo gastronómico privado de tus amigos.',
+                        message: 'Únete a savry — el círculo gastronómico privado de tus amigos.',
                       });
                     } finally {
                       setInviting(false);
@@ -488,11 +484,19 @@ export default function AmigosScreen() {
                   }}
                 >
                   {inviting ? (
-                    <ActivityIndicator size="small" color="#546b00" />
+                    <ActivityIndicator size="small" color={COLORS.onSecondaryContainer} />
                   ) : (
-                    <MaterialIcons name="person-add" size={16} color="#546b00" />
+                    <MaterialIcons name="person-add" size={16} color={COLORS.onSecondaryContainer} />
                   )}
                   <Text style={styles.inviteBtnText}>{inviting ? 'Generando...' : 'Invitar Amigos'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.contactsBtn}
+                  activeOpacity={0.8}
+                  onPress={() => router.push('/contacts-import')}
+                >
+                  <MaterialIcons name="import-contacts" size={16} color={COLORS.primary} />
+                  <Text style={styles.contactsBtnText}>Importar Contactos</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -503,7 +507,7 @@ export default function AmigosScreen() {
                 <SectionLabel text="DESCUBRE USUARIOS" />
                 <View style={{ gap: 10 }}>
                   {(suggestedUsers as any[]).slice(0, 6).map((user: any) => (
-                    <SearchResultCard key={user.id} user={user} currentUserId={currentUser?.id ?? ''} />
+                    <SearchResultCardWrapper key={user.id} user={user} currentUserId={currentUser?.id ?? ''} />
                   ))}
                 </View>
               </View>
@@ -540,7 +544,7 @@ export default function AmigosScreen() {
                 activeOpacity={0.75}
               >
                 <Text style={[styles.sortOptionText, active && styles.sortOptionTextActive]}>{opt}</Text>
-                {active && <MaterialIcons name="check" size={20} color="#546b00" />}
+                {active && <MaterialIcons name="check" size={20} color={COLORS.onSecondaryContainer} />}
               </TouchableOpacity>
             );
           })}
@@ -570,7 +574,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 20,
-    color: '#032417',
+    color: COLORS.primary,
   },
   headerRight: { width: 48, alignItems: 'flex-end' },
   container: {
@@ -582,7 +586,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#e6e2db',
+    backgroundColor: COLORS.surfaceContainerHighest,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 13,
@@ -592,7 +596,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontFamily: 'Manrope-Regular',
-    color: '#1c1c18',
+    color: COLORS.onSurface,
   },
   section: {
     marginBottom: 8,
@@ -600,12 +604,12 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 10,
-    color: '#727973',
+    color: COLORS.outline,
     textTransform: 'uppercase',
     letterSpacing: 2,
   },
   sectionBadge: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     borderRadius: 999,
     paddingHorizontal: 7,
     paddingVertical: 2,
@@ -615,7 +619,7 @@ const styles = StyleSheet.create({
   sectionBadgeText: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   // Empty states
   emptySearch: {
@@ -626,13 +630,13 @@ const styles = StyleSheet.create({
   emptySearchText: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 14,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
     textAlign: 'center',
   },
   emptySearchHint: {
     fontFamily: 'Manrope-Regular',
     fontSize: 12,
-    color: '#727973',
+    color: COLORS.outline,
     textAlign: 'center',
   },
   emptySection: {
@@ -640,19 +644,19 @@ const styles = StyleSheet.create({
     paddingVertical: 32,
     paddingHorizontal: 20,
     gap: 10,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 20,
   },
   emptySectionTitle: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 18,
-    color: '#032417',
+    color: COLORS.primary,
     textAlign: 'center',
   },
   emptySectionText: {
     fontFamily: 'Manrope-Regular',
     fontSize: 13,
-    color: '#727973',
+    color: COLORS.outline,
     textAlign: 'center',
     lineHeight: 20,
   },
@@ -660,7 +664,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#032417',
+    backgroundColor: COLORS.primary,
     paddingVertical: 12,
     paddingHorizontal: 22,
     borderRadius: 999,
@@ -669,102 +673,14 @@ const styles = StyleSheet.create({
   emptyCtaBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#ffffff',
-  },
-  // Search result card
-  searchCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 14,
-    shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 2,
-  },
-  searchName: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 15,
-    color: '#032417',
-  },
-  searchHandle: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 12,
-    color: '#727973',
-    marginTop: 2,
-  },
-  followBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#032417',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-    minWidth: 80,
-    justifyContent: 'center',
-  },
-  followBtnConnected: {
-    backgroundColor: '#c7ef48',
-  },
-  followBtnMutual: {
-    backgroundColor: '#c7ef48',
-  },
-  followBtnText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 13,
-    color: '#ffffff',
-  },
-  followBtnTextConnected: {
-    color: '#546b00',
-  },
-  // Follow request card
-  requestCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: '#ffffff',
-    borderRadius: 14,
-    padding: 14,
-    borderLeftWidth: 3,
-    borderLeftColor: '#c7ef48',
-    shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 2,
-  },
-  rejectBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f1ede6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  acceptBtn: {
-    backgroundColor: '#c7ef48',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    minWidth: 80,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 36,
-  },
-  acceptBtnText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 12,
-    color: '#546b00',
+    color: COLORS.onPrimary,
   },
   // Sort
   sortTriggerSmall: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -772,14 +688,14 @@ const styles = StyleSheet.create({
   sortTriggerSmallText: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 12,
-    color: '#032417',
+    color: COLORS.primary,
   },
   sortBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(3,36,23,0.3)',
   },
   sortSheet: {
-    backgroundColor: '#fdf9f2',
+    backgroundColor: COLORS.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
@@ -790,14 +706,14 @@ const styles = StyleSheet.create({
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#c1c8c2',
+    backgroundColor: COLORS.outlineVariant,
     alignSelf: 'center',
     marginBottom: 20,
   },
   sortSheetTitle: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 20,
-    color: '#032417',
+    color: COLORS.primary,
     marginBottom: 16,
   },
   sortOption: {
@@ -807,25 +723,25 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 14,
     borderRadius: 14,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     marginBottom: 8,
   },
-  sortOptionActive: { backgroundColor: '#c7ef48' },
+  sortOptionActive: { backgroundColor: COLORS.secondaryContainer },
   sortOptionText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 15,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
   },
-  sortOptionTextActive: { color: '#546b00' },
+  sortOptionTextActive: { color: COLORS.onSecondaryContainer },
   // Friend card
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 16,
     padding: 20,
     flexDirection: 'row',
     gap: 20,
     alignItems: 'flex-start',
-    shadowColor: '#1c1c18',
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.06,
     shadowRadius: 16,
@@ -845,14 +761,14 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#ffffff',
+    borderColor: COLORS.surfaceContainerLowest,
   },
-  affinityBadgeHigh: { backgroundColor: '#c7ef48' },
-  affinityBadgeLow: { backgroundColor: '#e6e2db' },
+  affinityBadgeHigh: { backgroundColor: COLORS.secondaryContainer },
+  affinityBadgeLow: { backgroundColor: COLORS.surfaceContainerHighest },
   affinityBadgeText: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   cardTop: {
     flexDirection: 'row',
@@ -863,12 +779,12 @@ const styles = StyleSheet.create({
   friendName: {
     fontFamily: 'Manrope-Bold',
     fontSize: 18,
-    color: '#032417',
+    color: COLORS.primary,
   },
   friendSpecialty: {
     fontFamily: 'Manrope-Medium',
     fontSize: 12,
-    color: '#727973',
+    color: COLORS.outline,
     marginTop: 2,
   },
   friendCityRow: {
@@ -880,21 +796,21 @@ const styles = StyleSheet.create({
   friendCityText: {
     fontFamily: 'Manrope-Regular',
     fontSize: 11,
-    color: '#727973',
+    color: COLORS.outline,
   },
   statsGrid: { flexDirection: 'row', gap: 8 },
   statCell: {
     flex: 1,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 10,
     padding: 10,
     alignItems: 'center',
   },
-  statCellHighlight: { backgroundColor: '#f0fad8' },
+  statCellHighlight: { backgroundColor: COLORS.surfaceContainerLow },
   statLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 9,
-    color: '#727973',
+    color: COLORS.outline,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 4,
@@ -902,11 +818,11 @@ const styles = StyleSheet.create({
   statValue: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 16,
-    color: '#032417',
+    color: COLORS.primary,
   },
   // Invite banner
   inviteBanner: {
-    backgroundColor: '#1a3a2b',
+    backgroundColor: COLORS.primaryContainer,
     borderRadius: 24,
     padding: 24,
     marginTop: 32,
@@ -924,7 +840,7 @@ const styles = StyleSheet.create({
   bannerTitle: {
     fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 22,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
     marginBottom: 8,
   },
   bannerSubtitle: {
@@ -944,14 +860,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     borderRadius: 12,
     paddingVertical: 13,
   },
   inviteBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
+  },
+  contactsBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: COLORS.surfaceContainerLowest,
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  contactsBtnText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 13,
+    color: COLORS.primary,
   },
   importBtn: {
     flex: 1,
@@ -959,13 +890,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 12,
     paddingVertical: 13,
   },
   importBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#032417',
+    color: COLORS.primary,
   },
 });

@@ -1,13 +1,72 @@
 import { supabase } from './supabase';
 
 // ══════════════════════════════════════════════════════════════════════════════
-// CHAIN_CATALOG v2 — 127 cadenas verificadas (Alimarket 2025, webs corporativas)
-// Cada entrada: regex pattern, slug id, display name
+// CHAIN CATALOG — Supabase-backed with hardcoded fallback
+//
+// Primary source: `chains` table in Supabase (chain_id, name, pattern).
+// Fallback: CHAIN_CATALOG_FALLBACK below (used when offline or query fails).
+// Adding a new chain = one INSERT in Supabase. No code changes needed.
 // ══════════════════════════════════════════════════════════════════════════════
 
 export type ChainEntry = { pattern: RegExp; chainId: string; name: string };
 
-export const CHAIN_CATALOG: ChainEntry[] = [
+// ── In-memory cache (populated from Supabase, falls back to hardcoded) ──────
+let _catalog: ChainEntry[] | null = null;
+let _catalogFetchedAt = 0;
+const CATALOG_TTL = 60 * 60 * 1000; // 1 hour
+
+/**
+ * Returns the active chain catalog. Fetches from Supabase on first call
+ * and caches for 1 hour. Falls back to hardcoded catalog on error.
+ */
+export async function getChainCatalog(): Promise<ChainEntry[]> {
+  const now = Date.now();
+  if (_catalog && now - _catalogFetchedAt < CATALOG_TTL) return _catalog;
+
+  try {
+    const { data, error } = await supabase
+      .from('chains')
+      .select('chain_id, name, pattern')
+      .not('chain_id', 'is', null)
+      .not('pattern', 'is', null);
+
+    if (error) throw error;
+    if (!data || data.length === 0) throw new Error('Empty catalog');
+
+    _catalog = data.map((row: any) => ({
+      pattern: new RegExp(row.pattern, 'i'),
+      chainId: row.chain_id,
+      name: row.name,
+    }));
+    _catalogFetchedAt = now;
+    return _catalog;
+  } catch (err) {
+    console.warn('[savry] Failed to fetch chains from Supabase, using fallback:', err);
+    if (!_catalog) _catalog = CHAIN_CATALOG_FALLBACK;
+    _catalogFetchedAt = now;
+    return _catalog;
+  }
+}
+
+/**
+ * Synchronous access to catalog. Returns cached version or fallback.
+ * Use this in hot paths where async is not possible (e.g. inside loops).
+ */
+export function getChainCatalogSync(): ChainEntry[] {
+  return _catalog ?? CHAIN_CATALOG_FALLBACK;
+}
+
+/** Force-refresh the catalog from Supabase (e.g. after admin adds a chain). */
+export function invalidateChainCatalog(): void {
+  _catalogFetchedAt = 0;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HARDCODED FALLBACK — used when Supabase is unreachable (offline, error)
+// Keep in sync with the chains table. This is the safety net, not the source.
+// ══════════════════════════════════════════════════════════════════════════════
+
+export const CHAIN_CATALOG_FALLBACK: ChainEntry[] = [
   // ── FAST FOOD — HAMBURGUESAS INTERNACIONALES ──
   { pattern: /mcdonald/i,                    chainId: 'mcdonalds',            name: "McDonald's" },
   { pattern: /burger\s*king/i,               chainId: 'burger-king',          name: "Burger King" },
@@ -31,7 +90,7 @@ export const CHAIN_CATALOG: ChainEntry[] = [
   { pattern: /timesburg/i,                   chainId: 'timesburg',            name: "Timesburg" },
   { pattern: /toro\s*burger/i,               chainId: 'toro-burger',          name: "TORO Burger Lounge" },
   { pattern: /\bberty.s\b/i,                 chainId: 'bertys',               name: "Berty's" },
-  { pattern: /\bhundreds?\b/i,                chainId: 'hundred-burgers',      name: "Hundred Burgers" },
+  { pattern: /\bhundreds?\b/i,               chainId: 'hundred-burgers',      name: "Hundred Burgers" },
 
   // ── FAST FOOD — PIZZA ──
   { pattern: /telepizza/i,                   chainId: 'telepizza',            name: "Telepizza" },
@@ -127,6 +186,7 @@ export const CHAIN_CATALOG: ChainEntry[] = [
   { pattern: /ikibana/i,                     chainId: 'ikibana',              name: "Ikibana" },
   { pattern: /padthaiwok|pad\s*thai\s*wok/i, chainId: 'padthaiwok',           name: "Padthaiwok" },
   { pattern: /boa[\s-]*bao/i,                chainId: 'boa-bao',              name: "Boa-Bao" },
+  { pattern: /la\s*monarracha/i,             chainId: 'lamonarracha',         name: "Lamonarracha" },
 
   // ── CAFÉ, BAKERY Y DESAYUNOS ──
   { pattern: /starbucks/i,                   chainId: 'starbucks',            name: "Starbucks" },
@@ -155,19 +215,32 @@ export const CHAIN_CATALOG: ChainEntry[] = [
   // ── OTROS ──
   { pattern: /la\s*chelinda/i,               chainId: 'la-chelinda',          name: "La Chelinda" },
   { pattern: /kurz/i,                        chainId: 'kurz-und-gut',         name: "Kurz & Gut" },
-  { pattern: /taco\s*alto/i,                 chainId: 'taco-alto',            name: "Taco Alto" },
+  { pattern: /taco\s*alto/i,                 chainId: 'taco-alto',           name: "Taco Alto" },
   { pattern: /\bsagardi\b/i,                 chainId: 'sagardi',              name: "Sagardi" },
   { pattern: /\birati\b/i,                   chainId: 'irati',                name: "Irati" },
   { pattern: /blue\s*frog/i,                 chainId: 'blue-frog',            name: "Blue Frog" },
 ];
 
+// Legacy alias — code that imports CHAIN_CATALOG still works
+export const CHAIN_CATALOG = CHAIN_CATALOG_FALLBACK;
+
 // ══════════════════════════════════════════════════════════════════════════════
 // PUBLIC API
 // ══════════════════════════════════════════════════════════════════════════════
 
-/** Match a restaurant name against the catalog. Returns chain info or null. */
+/** Match a restaurant name against the catalog (sync — uses cached/fallback). */
 export function matchChain(restaurantName: string): ChainEntry | null {
-  for (const entry of CHAIN_CATALOG) {
+  const catalog = getChainCatalogSync();
+  for (const entry of catalog) {
+    if (entry.pattern.test(restaurantName)) return entry;
+  }
+  return null;
+}
+
+/** Async match — ensures catalog is loaded from Supabase first. */
+export async function matchChainAsync(restaurantName: string): Promise<ChainEntry | null> {
+  const catalog = await getChainCatalog();
+  for (const entry of catalog) {
     if (entry.pattern.test(restaurantName)) return entry;
   }
   return null;
@@ -175,7 +248,8 @@ export function matchChain(restaurantName: string): ChainEntry | null {
 
 /** Get chain display name from a chainId slug. */
 export function getChainName(chainId: string): string | null {
-  const entry = CHAIN_CATALOG.find(c => c.chainId === chainId);
+  const catalog = getChainCatalogSync();
+  const entry = catalog.find(c => c.chainId === chainId);
   return entry?.name ?? null;
 }
 
@@ -199,13 +273,17 @@ export type ChainResult = {
  * Returns { ids, chainName } — for independents, ids = [restaurantId], chainName = null.
  */
 export async function getRelevantRestaurantIds(restaurantId: string): Promise<ChainResult> {
-  // 1. Fetch the restaurant
-  const { data: restaurant } = await supabase
-    .from('restaurants')
-    .select('id, name, chain_name')
-    .eq('id', restaurantId)
-    .single();
+  // Parallel: load catalog + fetch restaurant at the same time
+  const [catalog, restaurantResult] = await Promise.all([
+    getChainCatalog(),
+    supabase
+      .from('restaurants')
+      .select('id, name, chain_name')
+      .eq('id', restaurantId)
+      .single(),
+  ]);
 
+  const restaurant = restaurantResult.data;
   if (!restaurant) return { ids: [restaurantId], chainName: null, chainId: null };
 
   // 2. If chain_name is already set, find siblings by chain_name
@@ -219,10 +297,8 @@ export async function getRelevantRestaurantIds(restaurantId: string): Promise<Ch
     if (!ids.includes(restaurantId)) ids.push(restaurantId);
 
     // Look up display name from catalog
-    const entry = CHAIN_CATALOG.find(c => c.chainId === restaurant.chain_name);
-    // Also try regex match on the restaurant name as fallback
-    const regexMatch = !entry ? matchChain(restaurant.name) : null;
-    const displayName = entry?.name ?? regexMatch?.name ?? restaurant.name;
+    const entry = catalog.find(c => c.chainId === restaurant.chain_name);
+    const displayName = entry?.name ?? restaurant.name;
     return {
       ids,
       chainName: displayName,
@@ -253,10 +329,51 @@ export async function getRelevantRestaurantIds(restaurantId: string): Promise<Ch
         .from('restaurants')
         .update({ chain_name: match.chainId })
         .in('id', ids)
-    ).catch((err: any) => console.warn('[fudi] chain_name backfill failed:', err));
+    ).catch((err: any) => console.warn('[savry] chain_name backfill failed:', err));
   }
 
   return { ids, chainName: match.name, chainId: match.chainId };
+}
+
+/**
+ * Backfill chain_name for ALL restaurants in the DB that don't have one yet.
+ * Runs once per session (fire-and-forget). Matches names against catalog.
+ */
+let _backfillDone = false;
+export async function backfillAllChainNames(): Promise<void> {
+  if (_backfillDone) return;
+  _backfillDone = true;
+  try {
+    // Ensure we have the latest catalog from Supabase
+    await getChainCatalog();
+
+    const { data: restaurants } = await supabase
+      .from('restaurants')
+      .select('id, name')
+      .is('chain_name', null)
+      .limit(500);
+    if (!restaurants?.length) return;
+
+    const updates: { id: string; chain_name: string }[] = [];
+    for (const r of restaurants) {
+      const match = matchChain(r.name);
+      if (match) updates.push({ id: r.id, chain_name: match.chainId });
+    }
+    if (updates.length === 0) return;
+
+    // Batch update in groups of 20
+    for (let i = 0; i < updates.length; i += 20) {
+      const batch = updates.slice(i, i + 20);
+      await Promise.all(
+        batch.map(({ id, chain_name }) =>
+          supabase.from('restaurants').update({ chain_name }).eq('id', id)
+        )
+      );
+    }
+    if (__DEV__) console.log(`[savry] chain_name backfill: updated ${updates.length} restaurants`);
+  } catch (err) {
+    console.warn('[savry] chain_name backfill failed:', err);
+  }
 }
 
 // Legacy compat — used by old upsertRestaurant

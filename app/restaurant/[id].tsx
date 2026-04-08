@@ -2,12 +2,12 @@ import {
   View,
   Text,
   ScrollView,
-  Image,
   TouchableOpacity,
   StyleSheet,
   Platform,
-  ActivityIndicator,
   Share,
+  Linking,
+  ActivityIndicator,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -23,11 +23,20 @@ import {
   useRelevantRestaurantIds,
   useFriendStats,
 } from '../../lib/hooks/useRestaurant';
+import { useFriendDishesForRestaurant } from '../../lib/hooks/useDishes';
 import { useBookmark, useSavedRestaurants } from '../../lib/hooks/useVisit';
 import { InfoTag } from '../../components/InfoTag';
-import { scorePalette } from '../../lib/sentimentColors';
-import { getPlaceDetails, resolvePhotoUrl } from '../../lib/api/places';
+import { COLORS } from '../../lib/theme/colors';
+/** RecentVisit with corrected dishes type (API returns objects, not strings) */
+type RecentVisitWithDishes = Omit<import('../../lib/api/restaurants').RecentVisit, 'dishes'> & {
+  dishes: { name: string; highlighted: boolean }[];
+  user: { id: string; name: string; handle?: string; avatar_url: string | null };
+};
+import { scorePalette, sentimentPalette } from '../../lib/sentimentColors';
+import { getPlaceDetails, getPlaceExtendedInfo, resolvePhotoUrl, searchChainLocations } from '../../lib/api/places';
+import type { PlaceExtendedInfo, ChainLocation } from '../../lib/api/places';
 import { supabase } from '../../lib/supabase';
+import { FadeIn, ScoreReveal } from '../../components/Animations';
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -38,14 +47,14 @@ function timeAgo(dateStr: string) {
   return `hace ${Math.floor(hrs / 24)}d`;
 }
 
-function RelationLabel({ isMutual }: { isMutual: boolean }) {
+function SentimentBadge({ sentiment }: { sentiment: 'loved' | 'fine' | 'disliked' | null }) {
+  if (!sentiment) return null;
+  const labels: Record<string, string> = { loved: 'Encantó', fine: 'Bien', disliked: 'No gustó' };
+  const pal = sentimentPalette(sentiment);
   return (
-    <View style={{
-      backgroundColor: isMutual ? 'rgba(199,239,72,0.40)' : '#ebe8e1',
-      borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
-    }}>
-      <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 10, color: isMutual ? '#546b00' : '#424844' }}>
-        {isMutual ? 'Amigo' : 'Siguiendo'}
+    <View style={{ backgroundColor: pal.badgeBg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+      <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 10, color: pal.badgeText }}>
+        {labels[sentiment] ?? sentiment}
       </Text>
     </View>
   );
@@ -54,12 +63,14 @@ function RelationLabel({ isMutual }: { isMutual: boolean }) {
 export default function RestaurantScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const currentUser = useAppStore((s) => s.currentUser);
-  const showToast   = useAppStore((s) => s.showToast);
+  const showToast = useAppStore((s) => s.showToast);
   const { mutateAsync: toggleBookmark } = useBookmark(currentUser?.id);
   const { data: savedRestaurants } = useSavedRestaurants(currentUser?.id);
-  // Derive saved state from real data; pendingOverride gives instant optimistic feedback
   const isFavoritedFromDB = useMemo(
-    () => (savedRestaurants ?? []).some((r: any) => r.restaurant?.id === id),
+    () => (savedRestaurants ?? []).some((r) => {
+      const rest = r.restaurant as { id: string } | null;
+      return rest?.id === id;
+    }),
     [savedRestaurants, id]
   );
   const [pendingFav, setPendingFav] = useState<boolean | null>(null);
@@ -68,18 +79,63 @@ export default function RestaurantScreen() {
   const { data: restaurant, isLoading: loadingRest, isError: restaurantError } = useRestaurant(id);
   const { data: globalStats } = useRestaurantStats(id);
   const { data: chainData } = useRelevantRestaurantIds(id);
-  const relevantIds = chainData?.ids;
+  // Start loading with just [id] immediately, upgrade to full chain IDs when resolved
+  const relevantIds = chainData?.ids ?? (id ? [id] : undefined);
   const { data: friendStatsData } = useFriendStats(relevantIds, currentUser?.id);
-  const { data: recentVisits = [] } = useRecentVisits(relevantIds, currentUser?.id);
+  const { data: recentVisitsRaw = [] } = useRecentVisits(relevantIds, currentUser?.id);
+  const recentVisits = recentVisitsRaw as unknown as RecentVisitWithDishes[];
+  const { data: friendDishes = [] } = useFriendDishesForRestaurant(relevantIds, currentUser?.id);
 
-  const isChain = chainData?.chainId != null;
   const displayName = chainData?.chainName ?? restaurant?.name ?? '—';
-  const locationDisplay = isChain ? 'Múltiples ubicaciones' : (restaurant?.neighborhood ?? restaurant?.city ?? null);
-  const cuisine = (restaurant as any)?.cuisine as string | null ?? null;
-  const priceLevel = (restaurant as any)?.price_level as string | null ?? null;
+  const cuisine = restaurant?.cuisine ?? null;
+  const priceLevel = restaurant?.price_level != null ? String(restaurant.price_level) : null;
+  const neighborhood = restaurant?.neighborhood ?? null;
+  const city = restaurant?.city ?? null;
+
+  const isChain = !!chainData?.chainName;
+
+  // Chain locations from Google Places
+  const [chainLocations, setChainLocations] = useState<ChainLocation[]>([]);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
+  const [showAllLocations, setShowAllLocations] = useState(false);
+  const [loadingLocations, setLoadingLocations] = useState(false);
+  const VISIBLE_LOCATIONS = 5;
+
+  // Fetch ALL locations of the chain from Google Places (only for known chains)
+  useEffect(() => {
+    if (!isChain || !chainData?.chainName) {
+      setChainLocations([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingLocations(true);
+    searchChainLocations(chainData.chainName, 20).then((locs) => {
+      if (!cancelled) {
+        setChainLocations(locs);
+        setLoadingLocations(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setLoadingLocations(false);
+    });
+    return () => { cancelled = true; };
+  }, [chainData?.chainName, isChain]);
+
+  // When selected location changes, re-fetch place info for that placeId
+  useEffect(() => {
+    if (!selectedPlaceId) return;
+    setPlaceInfo(null);
+    (async () => {
+      try {
+        const info = await getPlaceExtendedInfo(selectedPlaceId);
+        if (info) setPlaceInfo(info);
+      } catch {}
+    })();
+  }, [selectedPlaceId]);
+
   const [fetchedCover, setFetchedCover] = useState<string | null>(null);
-  const dbCover = (restaurant as any)?.cover_image_url as string | null ?? null;
-  // Detect broken API URLs stored in DB (contain skipHttpRedirect or are v1 media endpoints)
+  const [placeInfo, setPlaceInfo] = useState<PlaceExtendedInfo | null>(null);
+  const dbCover = restaurant?.cover_image_url ?? null;
   const isBrokenUrl = dbCover ? dbCover.includes('places.googleapis.com') : false;
   const usableCover = isBrokenUrl ? null : dbCover;
   const coverImage = usableCover ?? fetchedCover;
@@ -87,7 +143,7 @@ export default function RestaurantScreen() {
   // Fetch cover photo from Google Places if missing or broken in DB
   useEffect(() => {
     if (usableCover || !restaurant || fetchedCover) return;
-    const placeId = (restaurant as any)?.google_place_id as string | undefined;
+    const placeId = restaurant?.google_place_id;
     if (!placeId) return;
     (async () => {
       try {
@@ -97,7 +153,6 @@ export default function RestaurantScreen() {
           const url = await resolvePhotoUrl(photoRef);
           if (url) {
             setFetchedCover(url);
-            // Backfill / fix in DB
             supabase.from('restaurants').update({ cover_image_url: url }).eq('id', id).then(() => {});
           }
         }
@@ -105,73 +160,114 @@ export default function RestaurantScreen() {
     })();
   }, [usableCover, restaurant, id]);
 
+  // Fetch extended info (hours, phone, website) from Google Places
+  useEffect(() => {
+    if (!restaurant || placeInfo) return;
+    const placeId = restaurant?.google_place_id;
+    if (!placeId) {
+      // Use address from DB as fallback
+      const addr = restaurant?.address;
+      if (addr) setPlaceInfo({ address: addr });
+      return;
+    }
+    (async () => {
+      try {
+        const info = await getPlaceExtendedInfo(placeId);
+        if (info) {
+          // Fall back to DB address if Google didn't return one
+          if (!info.address) {
+            info.address = restaurant?.address || undefined;
+          }
+          setPlaceInfo(info);
+        }
+      } catch {}
+    })();
+  }, [restaurant, id]);
+
   const friendScore = friendStatsData?.friendScore ?? null;
   const friendVisitCount = friendStatsData?.friendVisitCount ?? 0;
-  const friendSavedCount = friendStatsData?.friendSavedCount ?? 0;
   const globalScore = globalStats?.avg_score ?? null;
   const globalVisitCount = globalStats?.visit_count ?? 0;
-  const savedCount = globalStats?.saved_count ?? 0;
+  const friendSavedCount = friendStatsData?.friendSavedCount ?? 0;
 
-  const hasFriendData = friendVisitCount > 0 || !!friendScore;
-  const [metricsMode, setMetricsMode] = useState<'friends' | 'global'>('friends');
+  // Derive unique friend count from mutual visits
+  const mutualVisits = useMemo(
+    () => recentVisits.filter((v) => v.is_mutual),
+    [recentVisits]
+  );
+  const uniqueFriendCount = useMemo(() => {
+    const ids = new Set(mutualVisits.map((v) => v.user_id));
+    return ids.size;
+  }, [mutualVisits]);
 
-  // Auto-switch to global if friend data loaded and there's none
-  useEffect(() => {
-    if (friendStatsData && !hasFriendData) setMetricsMode('global');
-  }, [friendStatsData, hasFriendData]);
-
-  // Visitors with avatars for the visit tile
-  const friendVisitors = (recentVisits as any[]).filter((v) => v.is_mutual).slice(0, 3);
+  const hasFriendVisits = mutualVisits.length > 0;
+  const hasFriendDishes = friendDishes.length > 0;
 
   const friendPal = scorePalette(friendScore);
 
+  // Sort state for friend visits
+  const [sortMode, setSortMode] = useState<'recent' | 'rating' | 'affinity'>('recent');
+  const [showAllVisits, setShowAllVisits] = useState(false);
+  const sortedMutualVisits = useMemo(() => {
+    const arr = [...mutualVisits];
+    if (sortMode === 'rating') {
+      arr.sort((a, b) => (b.rank_score ?? 0) - (a.rank_score ?? 0));
+    } else if (sortMode === 'affinity') {
+      // affinity sort — keep original order (API already sorted by relationship closeness)
+    }
+    // 'recent' is default order from API (visited_at DESC)
+    return arr;
+  }, [mutualVisits, sortMode]);
+
+  // ─── Loading skeleton ───
   if (loadingRest) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+      <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
         <View style={s.header}>
           <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
-            <MaterialIcons name="arrow-back" size={24} color="#032417" />
+            <MaterialIcons name="arrow-back" size={24} color={COLORS.primary} />
           </TouchableOpacity>
-          <View style={{ width: 120, height: 18, backgroundColor: '#e6e2db', borderRadius: 8 }} />
+          <View style={{ width: 120, height: 18, backgroundColor: COLORS.surfaceContainerHighest, borderRadius: 8 }} />
           <View style={{ width: 40 }} />
         </View>
-        {/* Skeleton hero */}
-        <View style={{ height: 320, backgroundColor: '#e6e2db' }} />
+        <View style={{ height: 320, backgroundColor: COLORS.surfaceContainerHighest }} />
         <View style={{ paddingHorizontal: 20, paddingTop: 24, gap: 12 }}>
-          <View style={{ height: 16, width: '60%', backgroundColor: '#e6e2db', borderRadius: 8 }} />
-          <View style={{ height: 12, width: '40%', backgroundColor: '#f1ede6', borderRadius: 8 }} />
+          <View style={{ height: 16, width: '60%', backgroundColor: COLORS.surfaceContainerHighest, borderRadius: 8 }} />
+          <View style={{ height: 12, width: '40%', backgroundColor: COLORS.surfaceContainer, borderRadius: 8 }} />
           <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-            {[1,2,3].map(i => <View key={i} style={{ flex: 1, height: 64, backgroundColor: '#f1ede6', borderRadius: 14 }} />)}
+            {[1, 2].map((i) => (
+              <View key={i} style={{ flex: 1, height: 80, backgroundColor: COLORS.surfaceContainer, borderRadius: 14 }} />
+            ))}
           </View>
         </View>
       </View>
     );
   }
 
-  // Only show "not found" when the query definitively finished with no data (not an error/network issue)
+  // ─── Not found ───
   if (!loadingRest && !restaurantError && !restaurant) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+      <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
         <View style={s.header}>
           <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
-            <MaterialIcons name="arrow-back" size={24} color="#032417" />
+            <MaterialIcons name="arrow-back" size={24} color={COLORS.primary} />
           </TouchableOpacity>
           <Text style={s.headerTitle}>Restaurante</Text>
           <View style={{ width: 40 }} />
         </View>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32 }}>
-          <MaterialIcons name="restaurant" size={52} color="#c1c8c2" />
-          <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417', textAlign: 'center' }}>
+          <MaterialIcons name="restaurant" size={52} color={COLORS.outlineVariant} />
+          <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary, textAlign: 'center' }}>
             Restaurante no encontrado
           </Text>
-          <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center' }}>
+          <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: COLORS.outline, textAlign: 'center' }}>
             Este restaurante no está en nuestra base de datos todavía.
           </Text>
           <TouchableOpacity
-            style={{ backgroundColor: '#032417', borderRadius: 999, paddingVertical: 12, paddingHorizontal: 24, marginTop: 8 }}
+            style={{ backgroundColor: COLORS.primary, borderRadius: 999, paddingVertical: 12, paddingHorizontal: 24, marginTop: 8 }}
             onPress={() => router.back()}
           >
-            <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>Volver</Text>
+            <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.onPrimary }}>Volver</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -179,20 +275,22 @@ export default function RestaurantScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
       {/* Fixed Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn}>
-          <MaterialIcons name="arrow-back" size={24} color="#032417" />
+        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn} accessibilityLabel="Volver" accessibilityRole="button">
+          <MaterialIcons name="arrow-back" size={24} color={COLORS.primary} />
         </TouchableOpacity>
         <Text style={s.headerTitle} numberOfLines={1}>{displayName}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <TouchableOpacity
             style={s.headerBtn}
-            onPress={() => Share.share({ title: displayName, message: `Echa un vistazo a ${displayName} en fudi` })}
+            onPress={() => Share.share({ title: displayName, message: `Echa un vistazo a ${displayName} en savry` })}
             activeOpacity={0.7}
+            accessibilityLabel="Compartir restaurante"
+            accessibilityRole="button"
           >
-            <MaterialIcons name="ios-share" size={22} color="#032417" />
+            <MaterialIcons name="ios-share" size={22} color={COLORS.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={s.headerBtn}
@@ -203,30 +301,33 @@ export default function RestaurantScreen() {
               try {
                 if (id && currentUser?.id) {
                   await toggleBookmark({ restaurantId: id, save: next });
-                  showToast(next ? 'Restaurante guardado ✓' : 'Restaurante eliminado de guardados');
+                  showToast(next ? 'Restaurante guardado' : 'Restaurante eliminado de guardados');
                 }
-              } catch (err: any) {
-                setPendingFav(!next); // revert optimistic
-                const msg = err?.message ?? String(err);
-                console.error('[fudi:bookmark] toggle failed:', msg);
+              } catch (err: unknown) {
+                setPendingFav(!next);
+                const msg = err instanceof Error ? err.message : String(err);
+                if (__DEV__) console.error('[fudi:bookmark] toggle failed:', msg);
                 showToast(`Error: ${msg.slice(0, 80)}`);
               } finally {
-                setPendingFav(null); // let DB-derived state take over
+                setPendingFav(null);
               }
             }}
             activeOpacity={0.7}
+            accessibilityLabel={isFavorited ? 'Eliminar de guardados' : 'Guardar restaurante'}
+            accessibilityRole="button"
           >
             <MaterialIcons
               name={isFavorited ? 'star' : 'star-border'}
               size={24}
-              color={isFavorited ? '#c7ef48' : '#032417'}
+              color={isFavorited ? COLORS.secondaryContainer : COLORS.primary}
             />
           </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={s.scroll}>
-        {/* ── SECCIÓN 1: HERO ── */}
+
+        {/* ── SECTION 1: HERO ── */}
         <View style={s.hero}>
           {coverImage ? (
             <ExpoImage
@@ -237,190 +338,188 @@ export default function RestaurantScreen() {
               cachePolicy="memory-disk"
             />
           ) : (
-            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#1a3a2b', alignItems: 'center', justifyContent: 'center' }]}>
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: COLORS.primaryContainer, alignItems: 'center', justifyContent: 'center' }]}>
               <MaterialIcons name="restaurant" size={64} color="rgba(199,239,72,0.2)" />
             </View>
           )}
           <LinearGradient
-            colors={['transparent', 'rgba(3,36,23,0.50)', 'rgba(3,36,23,0.92)']}
+            colors={['transparent', 'rgba(3,36,23,0.55)', 'rgba(3,36,23,0.92)']}
             style={s.heroGradient}
           />
           <View style={s.heroInfo}>
-            {locationDisplay ? (
-              <Text style={{ fontFamily: 'Manrope-ExtraBold', fontSize: 10, color: '#c7ef48', textTransform: 'uppercase', letterSpacing: 3, marginBottom: 6 }}>
-                {locationDisplay}
-              </Text>
-            ) : null}
             <Text style={s.heroName}>{displayName}</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 8 }}>
+            <View style={s.heroChips}>
               <InfoTag value={cuisine} />
               <InfoTag value={priceLevel} />
+              {isChain ? (
+                <InfoTag value="Múltiples ubicaciones" />
+              ) : neighborhood && city && neighborhood.toLowerCase() !== city.toLowerCase() ? (
+                <>
+                  <InfoTag value={neighborhood} />
+                  <InfoTag value={city} />
+                </>
+              ) : (
+                <InfoTag value={neighborhood || city} />
+              )}
             </View>
           </View>
         </View>
 
-        {/* ── SECCIÓN 2: STATS ── */}
-        <View style={s.statsWrapper}>
-          <View style={s.statsCard}>
-            {/* Header: title + Amigos/Global toggle */}
-            <View style={s.statsCardHeader}>
-              <Text style={s.statsCardTitle}>Tu círculo</Text>
-              <View style={s.metricsToggle}>
-                <TouchableOpacity
-                  style={[s.metricsToggleBtn, metricsMode === 'friends' && s.metricsToggleBtnActive]}
-                  onPress={() => setMetricsMode('friends')}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[s.metricsToggleText, metricsMode === 'friends' && s.metricsToggleTextActive]}>
-                    Amigos
+        {/* ── SECTION 2: BENTO STATS (2x2) ── */}
+        <FadeIn delay={150} translateY={24}>
+        <View style={s.bentoWrapper}>
+          <View style={s.bentoGrid}>
+            {/* Top-left: Tus amigos */}
+            <View style={s.bentoCell}>
+              <Text style={s.bentoCellLabel}>Tus amigos</Text>
+              {hasFriendVisits ? (
+                <>
+                  <ScoreReveal delay={350}>
+                  <Text style={[s.bentoCellValue, { fontSize: 32, color: friendPal.badgeText }]}>
+                    {friendScore !== null ? friendScore.toFixed(1) : '—'}
                   </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[s.metricsToggleBtn, metricsMode === 'global' && s.metricsToggleBtnActive]}
-                  onPress={() => setMetricsMode('global')}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[s.metricsToggleText, metricsMode === 'global' && s.metricsToggleTextActive]}>
-                    Global
+                  </ScoreReveal>
+                  <Text style={s.bentoCellDetail}>
+                    {uniqueFriendCount} amigo{uniqueFriendCount !== 1 ? 's' : ''} · {friendVisitCount} visita{friendVisitCount !== 1 ? 's' : ''}
                   </Text>
-                </TouchableOpacity>
-              </View>
+                </>
+              ) : (
+                <>
+                  <Text style={[s.bentoCellValue, { fontSize: 32, color: COLORS.outlineVariant }]}>—</Text>
+                  <Text style={s.bentoCellDetail}>Ningún amigo ha ido aún</Text>
+                </>
+              )}
             </View>
 
-            {/* Three metric tiles */}
-            <View style={s.statsRow}>
-              {/* ── Media ── */}
-              <View style={s.statCell}>
-                {(() => {
-                  const val = metricsMode === 'friends' ? friendScore : globalScore;
-                  const isHigh = val !== null && val >= 7.5;
-                  const color = val === null ? '#c1c8c2' : isHigh ? '#516600' : '#032417';
-                  const isFriend = metricsMode === 'friends' && !!friendScore;
-                  const isLow = metricsMode === 'global' && globalVisitCount > 0 && globalVisitCount < 3;
-                  return (
-                    <>
-                      <Text style={[s.statValue, { color }]}>
-                        {val !== null ? val.toFixed(1) : '—'}
-                      </Text>
-                      <Text style={s.statLabel}>
-                        {isLow ? 'POCOS DATOS' : 'MEDIA'}
-                      </Text>
-                      <Text style={[s.statSub, { color: isFriend ? '#546b00' : '#9ea8a0' }]}>
-                        {isFriend ? 'de amigos' : 'en fudi'}
-                      </Text>
-                    </>
-                  );
-                })()}
-              </View>
-
-              <View style={s.statDivider} />
-
-              {/* ── Visitas ── */}
-              <View style={s.statCell}>
-                {(() => {
-                  const val = metricsMode === 'friends'
-                    ? (friendVisitCount > 0 ? friendVisitCount : null)
-                    : (globalVisitCount > 0 ? globalVisitCount : null);
-                  const isFriend = metricsMode === 'friends' && friendVisitCount > 0;
-                  return (
-                    <>
-                      {/* Avatar stack when showing friend visits */}
-                      {isFriend && friendVisitors.length > 0 && (
-                        <View style={s.avatarStack}>
-                          {friendVisitors.map((v: any, i: number) =>
-                            v.user?.avatar_url ? (
-                              <ExpoImage
-                                key={v.id ?? i}
-                                source={{ uri: v.user.avatar_url }}
-                                style={[s.stackAvatar, { marginLeft: i > 0 ? -7 : 0 }]}
-                                contentFit="cover"
-                                cachePolicy="memory-disk"
-                              />
-                            ) : (
-                              <View key={v.id ?? i} style={[s.stackAvatar, s.stackAvatarPlaceholder, { marginLeft: i > 0 ? -7 : 0 }]}>
-                                <MaterialIcons name="person" size={8} color="#727973" />
-                              </View>
-                            )
-                          )}
-                          {friendVisitCount > 3 && (
-                            <View style={[s.stackAvatar, s.stackAvatarMore, { marginLeft: -7 }]}>
-                              <Text style={s.stackAvatarMoreText}>+{friendVisitCount - 3}</Text>
-                            </View>
-                          )}
-                        </View>
-                      )}
-                      <Text style={[s.statValue, { color: val !== null ? '#032417' : '#c1c8c2' }]}>
-                        {val !== null ? val : '—'}
-                      </Text>
-                      <Text style={s.statLabel}>VISITAS</Text>
-                      <Text style={[s.statSub, { color: isFriend ? '#546b00' : '#9ea8a0' }]}>
-                        {isFriend ? 'de amigos' : 'en fudi'}
-                      </Text>
-                    </>
-                  );
-                })()}
-              </View>
-
-              <View style={s.statDivider} />
-
-              {/* ── Guardados ── */}
-              <View style={s.statCell}>
-                {(() => {
-                  const val = metricsMode === 'friends'
-                    ? (friendSavedCount > 0 ? friendSavedCount : null)
-                    : (savedCount > 0 ? savedCount : null);
-                  const isFriend = metricsMode === 'friends' && friendSavedCount > 0;
-                  return (
-                    <>
-                      <Text style={[s.statValue, { color: val !== null ? '#032417' : '#c1c8c2' }]}>
-                        {val !== null ? val : '—'}
-                      </Text>
-                      <Text style={s.statLabel}>GUARDADOS</Text>
-                      <Text style={[s.statSub, { color: isFriend ? '#546b00' : '#9ea8a0' }]}>
-                        {isFriend ? 'de amigos' : 'en fudi'}
-                      </Text>
-                    </>
-                  );
-                })()}
-              </View>
+            {/* Top-right: Global */}
+            <View style={s.bentoCell}>
+              <Text style={s.bentoCellLabel}>Global</Text>
+              {globalVisitCount >= 1 ? (
+                <>
+                  <Text style={[s.bentoCellValue, { fontSize: 28, color: COLORS.onSurfaceVariant }]}>
+                    {globalScore !== null ? globalScore.toFixed(1) : '—'}
+                  </Text>
+                  <Text style={s.bentoCellDetail}>
+                    {globalVisitCount} visita{globalVisitCount !== 1 ? 's' : ''}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={[s.bentoCellValue, { fontSize: 28, color: COLORS.outlineVariant }]}>—</Text>
+                  <Text style={s.bentoCellDetail}>Pocas visitas aún</Text>
+                </>
+              )}
             </View>
 
-            {/* Empty friend state */}
-            {metricsMode === 'friends' && !hasFriendData && (
-              <View style={s.statsEmptyFriends}>
-                <MaterialIcons name="group-add" size={14} color="#c1c8c2" />
-                <Text style={s.statsEmptyText}>Ningún amigo ha visitado aún</Text>
+            {/* Bottom: Guardados — spans full width */}
+            <View style={s.bentoCellWide}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+                <MaterialIcons name="bookmark" size={18} color="#032417" />
+                {friendSavedCount > 0 ? (
+                  <>
+                    <Text style={s.bentoCellLabel} numberOfLines={1}>Guardado por</Text>
+                    <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 18, color: '#032417' }} numberOfLines={1}>
+                      {friendSavedCount} {friendSavedCount === 1 ? 'amigo' : 'amigos'}
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={[s.bentoCellLabel, { fontSize: 10 }]} numberOfLines={1}>Ningún amigo lo ha guardado aún</Text>
+                )}
+              </View>
+              <TouchableOpacity
+                style={[
+                  s.saveBtn,
+                  isFavorited && s.saveBtnActive,
+                ]}
+                activeOpacity={0.8}
+                onPress={async () => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+                  const next = !isFavorited;
+                  setPendingFav(next);
+                  try {
+                    if (id && currentUser?.id) {
+                      await toggleBookmark({ restaurantId: id, save: next });
+                      showToast(next ? 'Restaurante guardado' : 'Eliminado de guardados');
+                    }
+                  } catch {
+                    setPendingFav(!next);
+                  } finally {
+                    setPendingFav(null);
+                  }
+                }}
+              >
+                <MaterialIcons
+                  name={isFavorited ? 'bookmark' : 'bookmark-border'}
+                  size={16}
+                  color={isFavorited ? '#032417' : '#032417'}
+                />
+                <Text style={s.saveBtnText}>
+                  {isFavorited ? 'Guardado' : 'Guardar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+        </FadeIn>
+
+        {/* ── SECTION 3: FRIEND VISITS ── */}
+        {hasFriendVisits && (
+          <FadeIn delay={300} translateY={20}>
+          <View style={s.friendVisitsSection}>
+            <Text style={s.sectionTitle}>Últimas visitas de amigos</Text>
+
+            {/* Sort chips — only if >=5 friend visits */}
+            {mutualVisits.length >= 5 && (
+              <View style={s.sortChips}>
+                {(['recent', 'rating', 'affinity'] as const).map((mode) => {
+                  const labels: Record<string, string> = {
+                    recent: 'Reciente',
+                    rating: 'Valoración',
+                    affinity: 'Afinidad',
+                  };
+                  const active = sortMode === mode;
+                  return (
+                    <TouchableOpacity
+                      key={mode}
+                      style={[s.sortChip, active && s.sortChipActive]}
+                      onPress={() => setSortMode(mode)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[s.sortChipText, active && s.sortChipTextActive]}>
+                        {labels[mode]}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             )}
-          </View>
-        </View>
 
-        {/* ── SECCIÓN 3: VISITAS RECIENTES ── */}
-        <View style={s.visitsSection}>
-          <Text style={s.sectionTitle}>
-            {(recentVisits as any[]).some((v) => v.is_mutual)
-              ? 'Lo que dicen tus amigos'
-              : 'Visitas recientes en fudi'}
-          </Text>
-          {(recentVisits as any[]).length === 0 ? (
-            <View style={s.emptyState}>
-              <MaterialIcons name="people" size={32} color="#c1c8c2" />
-              <Text style={s.emptyText}>Ningún amigo ha visitado este restaurante aún</Text>
-            </View>
-          ) : (
+            {/* Visit cards */}
             <View style={s.visitsList}>
-              {(recentVisits as any[]).slice(0, 5).map((visit, i) => {
+              {(showAllVisits ? sortedMutualVisits : sortedMutualVisits.slice(0, 5)).map((visit, i) => {
                 const pal = scorePalette(visit.rank_score);
+                const dishes = visit.dishes ?? [];
+                const visibleDishes = dishes.slice(0, 4);
+                const extraDishCount = dishes.length - 4;
+
                 return (
                   <TouchableOpacity
                     key={visit.id}
-                    style={[s.visitCard, i < Math.min((recentVisits as any[]).length, 5) - 1 && s.visitCardBorder]}
+                    style={[
+                      s.visitCard,
+                      i < Math.min(sortedMutualVisits.length, 5) - 1 && s.visitCardBorder,
+                    ]}
                     activeOpacity={0.75}
                     onPress={() => router.push(`/visit/${visit.id}`)}
                   >
                     {/* Avatar */}
                     {visit.user?.avatar_url ? (
-                      <ExpoImage source={{ uri: visit.user.avatar_url }} style={s.visitAvatar} contentFit="cover" cachePolicy="memory-disk" />
+                      <ExpoImage
+                        source={{ uri: visit.user.avatar_url }}
+                        style={s.visitAvatar}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                      />
                     ) : (
                       <View style={[s.visitAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
                         <MaterialIcons name="person" size={18} color="#727973" />
@@ -429,28 +528,47 @@ export default function RestaurantScreen() {
 
                     {/* Content */}
                     <View style={{ flex: 1, gap: 4 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={s.visitName} numberOfLines={1}>{visit.user?.name ?? ''}</Text>
-                        <RelationLabel isMutual={visit.is_mutual} />
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text style={s.visitHandle} numberOfLines={1}>
+                          @{visit.user?.handle ?? visit.user?.name?.toLowerCase().replace(/\s+/g, '') ?? ''}
+                        </Text>
+                        <SentimentBadge sentiment={visit.sentiment} />
                       </View>
+                      <Text style={s.visitTime}>{timeAgo(visit.visited_at)}</Text>
+
+                      {/* Visit note / review */}
                       {visit.note ? (
                         <Text style={s.visitNote} numberOfLines={2}>"{visit.note}"</Text>
                       ) : null}
-                      {visit.dishes && visit.dishes.length > 0 && (
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 5 }}>
-                          {(visit.dishes as any[]).slice(0, 4).map((d: any, di: number) => {
-                            const name = typeof d === 'string' ? d : d.name;
-                            const highlighted = typeof d === 'object' && d.highlighted;
-                            return (
-                              <View key={di} style={[s.dishChip, highlighted && s.dishChipHighlighted]}>
-                                {highlighted && <Text style={s.dishChipStar}>★</Text>}
-                                <Text style={[s.dishChipText, highlighted && s.dishChipTextHighlighted]} numberOfLines={1}>{name}</Text>
-                              </View>
-                            );
-                          })}
-                        </ScrollView>
+
+                      {/* Location name for chains */}
+                      {visit.restaurant?.name && visit.restaurant.name !== displayName && (
+                        <Text style={s.visitLocation} numberOfLines={1}>
+                          {visit.restaurant.name}
+                        </Text>
                       )}
-                      <Text style={s.visitTime}>{timeAgo(visit.visited_at)}</Text>
+
+                      {/* Dish chips */}
+                      {dishes.length > 0 && (
+                        <View style={s.dishChipsRow}>
+                          {visibleDishes.map((d, di) => (
+                            <View key={di} style={[s.dishChip, d.highlighted && s.dishChipHighlighted]}>
+                              {d.highlighted && <Text style={s.dishChipStar}>★</Text>}
+                              <Text
+                                style={[s.dishChipText, d.highlighted && s.dishChipTextHighlighted]}
+                                numberOfLines={1}
+                              >
+                                {d.name}
+                              </Text>
+                            </View>
+                          ))}
+                          {extraDishCount > 0 && (
+                            <View style={s.dishChipMore}>
+                              <Text style={s.dishChipMoreText}>+{extraDishCount}</Text>
+                            </View>
+                          )}
+                        </View>
+                      )}
                     </View>
 
                     {/* Score */}
@@ -465,8 +583,181 @@ export default function RestaurantScreen() {
                 );
               })}
             </View>
-          )}
-        </View>
+
+            {/* "Ver todas" button if more than 5 */}
+            {mutualVisits.length > 5 && (
+              <TouchableOpacity
+                style={s.verTodasBtn}
+                activeOpacity={0.8}
+                onPress={() => setShowAllVisits((prev) => !prev)}
+              >
+                <Text style={s.verTodasText}>{showAllVisits ? 'Ver menos' : 'Ver todas'}</Text>
+                <MaterialIcons name={showAllVisits ? 'expand-less' : 'chevron-right'} size={18} color="#032417" />
+              </TouchableOpacity>
+            )}
+          </View>
+          </FadeIn>
+        )}
+
+        {/* ── SECTION 5: INFO DEL RESTAURANTE ── */}
+        {(placeInfo || isChain) && (
+          <FadeIn delay={400} translateY={20}>
+          <View style={s.infoSection}>
+            <Text style={s.infoTitle}>Info del restaurante</Text>
+
+            {/* Location picker for franchise chains */}
+            {isChain && (
+              <View style={{ marginBottom: 12 }}>
+                <TouchableOpacity
+                  style={s.locationPicker}
+                  activeOpacity={0.8}
+                  onPress={() => setLocationPickerOpen(!locationPickerOpen)}
+                >
+                  <MaterialIcons name="store" size={18} color="#032417" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.locationPickerLabel}>Ubicación</Text>
+                    <Text style={s.locationPickerValue} numberOfLines={1}>
+                      {selectedPlaceId
+                        ? (chainLocations.find(l => l.placeId === selectedPlaceId)?.name ?? displayName)
+                        : 'Seleccionar ubicación'}
+                    </Text>
+                  </View>
+                  {chainLocations.length > 0 && (
+                    <View style={s.locationPickerBadge}>
+                      <Text style={s.locationPickerBadgeText}>{chainLocations.length}</Text>
+                    </View>
+                  )}
+                  <MaterialIcons
+                    name={locationPickerOpen ? 'expand-less' : 'expand-more'}
+                    size={22}
+                    color="#727973"
+                  />
+                </TouchableOpacity>
+
+                {locationPickerOpen && (
+                  <View style={s.locationDropdown}>
+                    {loadingLocations ? (
+                      <View style={{ padding: 20, alignItems: 'center' }}>
+                        <ActivityIndicator size="small" color="#032417" />
+                        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 12, color: '#727973', marginTop: 8 }}>
+                          Buscando ubicaciones...
+                        </Text>
+                      </View>
+                    ) : chainLocations.length === 0 ? (
+                      <View style={{ padding: 16, alignItems: 'center' }}>
+                        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973' }}>
+                          No se encontraron ubicaciones
+                        </Text>
+                      </View>
+                    ) : (
+                      <>
+                        {(showAllLocations ? chainLocations : chainLocations.slice(0, VISIBLE_LOCATIONS)).map((loc) => {
+                          const isSelected = loc.placeId === selectedPlaceId;
+                          return (
+                            <TouchableOpacity
+                              key={loc.placeId}
+                              style={[s.locationOption, isSelected && s.locationOptionActive]}
+                              activeOpacity={0.7}
+                              onPress={() => {
+                                setSelectedPlaceId(loc.placeId);
+                                setLocationPickerOpen(false);
+                                setShowAllLocations(false);
+                                if (Platform.OS !== 'web') Haptics.selectionAsync();
+                              }}
+                            >
+                              <View style={{ flex: 1 }}>
+                                <Text style={[s.locationOptionName, isSelected && s.locationOptionNameActive]} numberOfLines={1}>
+                                  {loc.name}
+                                </Text>
+                                {loc.address && (
+                                  <Text style={s.locationOptionMeta} numberOfLines={1}>
+                                    {loc.address}
+                                  </Text>
+                                )}
+                              </View>
+                              {isSelected && (
+                                <MaterialIcons name="check-circle" size={18} color="#546b00" />
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                        {!showAllLocations && chainLocations.length > VISIBLE_LOCATIONS && (
+                          <TouchableOpacity
+                            style={s.locationShowAll}
+                            activeOpacity={0.7}
+                            onPress={() => setShowAllLocations(true)}
+                          >
+                            <Text style={s.locationShowAllText}>
+                              Ver todas ({chainLocations.length})
+                            </Text>
+                            <MaterialIcons name="expand-more" size={16} color="#546b00" />
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    )}
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Address */}
+            {placeInfo?.address && (
+              <TouchableOpacity
+                style={s.infoRow}
+                onPress={() => {
+                  const url = placeInfo.mapsUrl || `https://maps.google.com/?q=${encodeURIComponent(placeInfo.address!)}`;
+                  Linking.openURL(url);
+                }}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons name="location-on" size={20} color="#727973" />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.infoText}>{placeInfo.address}</Text>
+                  <Text style={s.infoAction}>{'Cómo llegar →'}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* Phone */}
+            {placeInfo?.phone && (
+              <TouchableOpacity
+                style={s.infoRow}
+                onPress={() => Linking.openURL(`tel:${placeInfo.phone}`)}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons name="phone" size={20} color="#727973" />
+                <Text style={s.infoText}>{placeInfo.phone}</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Website */}
+            {placeInfo?.website && (
+              <TouchableOpacity
+                style={s.infoRow}
+                onPress={() => Linking.openURL(placeInfo.website!)}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons name="language" size={20} color="#727973" />
+                <Text style={[s.infoText, { color: '#546b00' }]} numberOfLines={1}>
+                  {placeInfo.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Hours */}
+            {placeInfo?.hours && placeInfo.hours.length > 0 && (
+              <View style={s.infoRow}>
+                <MaterialIcons name="schedule" size={20} color="#727973" />
+                <View style={{ flex: 1 }}>
+                  {placeInfo.hours.map((line, i) => (
+                    <Text key={i} style={[s.infoText, { fontSize: 12, lineHeight: 20 }]}>{line}</Text>
+                  ))}
+                </View>
+              </View>
+            )}
+          </View>
+          </FadeIn>
+        )}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -496,184 +787,114 @@ const s = StyleSheet.create({
   },
   scroll: { paddingTop: Platform.OS === 'ios' ? 108 : 88 },
 
-  // Hero
-  hero: { height: 360, position: 'relative' },
+  // ── Hero ──
+  hero: { height: 320, position: 'relative' },
   heroGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '70%' },
   heroInfo: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    padding: 22, paddingBottom: 32,
+    padding: 20, paddingBottom: 24,
   },
   heroName: {
-    fontFamily: 'NotoSerif-BoldItalic', fontSize: 32,
-    color: '#ffffff', lineHeight: 38,
+    fontFamily: 'NotoSerif-Bold', fontSize: 24,
+    color: '#ffffff', lineHeight: 30,
   },
-  heroMeta: { fontFamily: 'Manrope-Regular', fontSize: 13, color: 'rgba(255,255,255,0.80)' },
+  heroChips: {
+    flexDirection: 'row', flexWrap: 'wrap',
+    alignItems: 'center', gap: 6, marginTop: 10,
+  },
 
-  // Stats
-  statsWrapper: {
-    paddingHorizontal: 16,
-    marginTop: -20,
-    zIndex: 10,
+  // ── Bento Stats ──
+  bentoWrapper: {
+    backgroundColor: '#f7f3ec',
+    padding: 16,
   },
-  statsCard: {
+  bentoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  bentoCell: {
+    flex: 1,
+    minWidth: '45%',
     backgroundColor: '#ffffff',
-    borderRadius: 20,
-    paddingTop: 16,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-    shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.10,
-    shadowRadius: 20,
-    elevation: 6,
+    borderRadius: 16,
+    padding: 16,
+    gap: 4,
   },
-  statsCardHeader: {
+  bentoCellWide: {
+    width: '100%',
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 18,
   },
-  statsCardTitle: {
-    fontFamily: 'NotoSerif-BoldItalic',
-    fontSize: 15,
-    color: '#032417',
-  },
-  metricsToggle: {
-    flexDirection: 'row',
-    backgroundColor: '#f1ede6',
-    borderRadius: 999,
-    padding: 3,
-  },
-  metricsToggleBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
-  metricsToggleBtnActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  metricsToggleText: {
-    fontFamily: 'Manrope-SemiBold',
+  bentoCellLabel: {
+    fontFamily: 'Manrope-Bold',
     fontSize: 11,
     color: '#727973',
-  },
-  metricsToggleTextActive: {
-    color: '#032417',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-  },
-  statCell: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-    paddingBottom: 2,
-  },
-  statDivider: {
-    width: 0,
-    height: 0,
-  },
-  statValue: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 30,
-    lineHeight: 34,
-    color: '#032417',
-  },
-  statLabel: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 9,
-    color: '#727973',
     textTransform: 'uppercase',
-    letterSpacing: 1.2,
+    letterSpacing: 1,
+    marginBottom: 4,
   },
-  statSub: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 10,
-    marginTop: 1,
+  bentoCellValue: {
+    fontFamily: 'NotoSerif-Bold',
+    lineHeight: 38,
   },
-  avatarStack: {
-    flexDirection: 'row',
-    marginBottom: 5,
-    height: 20,
-  },
-  stackAvatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#ffffff',
-  },
-  stackAvatarPlaceholder: {
-    backgroundColor: '#e6e2db',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stackAvatarMore: {
-    backgroundColor: '#f1ede6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stackAvatarMoreText: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 7,
+  bentoCellDetail: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 12,
     color: '#727973',
+    marginTop: 2,
   },
-  statsEmptyFriends: {
+  saveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    justifyContent: 'center',
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#f1ede6',
-    marginTop: 14,
-  },
-  statsEmptyText: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 11,
-    color: '#c1c8c2',
-  },
-
-  // Dishes
-  section: { paddingHorizontal: 20, paddingTop: 28 },
-  sectionTitle: {
-    fontFamily: 'NotoSerif-BoldItalic', fontSize: 20, color: '#032417', marginBottom: 16,
-  },
-  emptyState: { alignItems: 'center', paddingVertical: 24, gap: 8 },
-  emptyText: { fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center' },
-  emptyBtn: { marginTop: 4, backgroundColor: '#c7ef48', borderRadius: 20, paddingHorizontal: 20, paddingVertical: 8 },
-  emptyBtnText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#032417' },
-  dishesList: { gap: 0 },
-  dishRow: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
-    paddingVertical: 12,
-  },
-  dishRowBorder: {
-    borderBottomWidth: 1, borderBottomColor: 'rgba(193,200,194,0.20)',
-  },
-  dishName: {
-    fontFamily: 'Manrope-SemiBold', fontSize: 14, color: '#1c1c18',
-  },
-  dishFriend: {
-    fontFamily: 'Manrope-SemiBold', fontSize: 12, color: '#516600',
-  },
-  dishGlobal: {
-    fontFamily: 'Manrope-Regular', fontSize: 12, color: '#727973',
-  },
-
-  // Recent visits
-  visitsSection: {
     backgroundColor: '#f7f3ec',
-    borderRadius: 24,
-    marginHorizontal: 16,
-    marginTop: 28,
-    padding: 20,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  saveBtnActive: {
+    backgroundColor: '#c7ef48',
+  },
+  saveBtnText: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 13,
+    color: '#032417',
+  },
+
+  // ── Friend Visits ──
+  friendVisitsSection: {
+    paddingHorizontal: 16,
+    paddingTop: 28,
+  },
+  sectionTitle: {
+    fontFamily: 'NotoSerif-Bold', fontSize: 18, color: '#032417', marginBottom: 16,
+  },
+  sortChips: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  sortChip: {
+    backgroundColor: '#f1ede6',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  sortChipActive: {
+    backgroundColor: '#c7ef48',
+  },
+  sortChipText: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 12,
+    color: '#727973',
+  },
+  sortChipTextActive: {
+    color: '#546b00',
   },
   visitsList: { gap: 0 },
   visitCard: {
@@ -687,49 +908,180 @@ const s = StyleSheet.create({
     width: 42, height: 42, borderRadius: 21,
     borderWidth: 2, borderColor: 'rgba(199,239,72,0.5)',
   },
-  visitName: { fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417' },
+  visitHandle: {
+    fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417',
+  },
+  visitLocation: {
+    fontFamily: 'Manrope-Regular', fontSize: 12, color: '#424844',
+  },
+  visitTime: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#727973' },
   visitNote: {
-    fontFamily: 'NotoSerif-Italic', fontSize: 13,
-    color: '#424844', lineHeight: 18,
+    fontFamily: 'NotoSerif-Italic',
+    fontSize: 13,
+    color: '#424844',
+    lineHeight: 18,
+    marginTop: 2,
   },
-  dishChipHighlighted: {
-    backgroundColor: 'rgba(199,239,72,0.30)',
-    borderColor: 'rgba(84,107,0,0.25)',
-  },
-  dishChipStar: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 10,
-    color: '#516600',
-  },
-  dishChipTextHighlighted: {
-    color: '#516600',
-    fontFamily: 'Manrope-SemiBold',
-  },
-  dishChip: {
-    backgroundColor: '#ffffff', borderRadius: 8,
-    paddingHorizontal: 8, paddingVertical: 3,
-  },
-  dishChipText: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#424844' },
-  visitTime: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#727973', marginTop: 2 },
   visitScore: {
     paddingHorizontal: 10, paddingVertical: 4,
     borderRadius: 999, alignSelf: 'flex-start', marginTop: 2,
   },
   visitScoreText: { fontFamily: 'NotoSerif-Bold', fontSize: 14 },
 
-  // CTA
-  ctaWrapper: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 100 : 80,
-    left: 24, right: 24, zIndex: 60,
+  // Dish chips
+  dishChipsRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 2,
   },
-  ctaBtn: {
-    backgroundColor: '#032417',
-    borderRadius: 999,
-    paddingVertical: 18,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25, shadowRadius: 16, elevation: 8,
+  dishChip: {
+    backgroundColor: '#ffffff', borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderWidth: 1, borderColor: '#f1ede6',
+    flexDirection: 'row', alignItems: 'center', gap: 3,
   },
-  ctaBtnText: { fontFamily: 'Manrope-Bold', fontSize: 17, color: '#ffffff' },
+  dishChipHighlighted: {
+    backgroundColor: 'rgba(199,239,72,0.30)',
+    borderColor: 'rgba(84,107,0,0.25)',
+  },
+  dishChipStar: {
+    fontFamily: 'Manrope-Bold', fontSize: 10, color: '#516600',
+  },
+  dishChipText: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#424844' },
+  dishChipTextHighlighted: {
+    color: '#516600', fontFamily: 'Manrope-SemiBold',
+  },
+  dishChipMore: {
+    backgroundColor: '#f1ede6', borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  dishChipMoreText: {
+    fontFamily: 'Manrope-SemiBold', fontSize: 11, color: '#727973',
+  },
+
+  // Ver todas
+  verTodasBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 4, paddingVertical: 14,
+  },
+  verTodasText: {
+    fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417',
+  },
+
+  // ── Info del restaurante ──
+  infoSection: {
+    backgroundColor: '#f7f3ec',
+    marginHorizontal: 16,
+    borderRadius: 20,
+    padding: 20,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  infoTitle: {
+    fontFamily: 'NotoSerif-Bold',
+    fontSize: 18,
+    color: '#032417',
+    marginBottom: 16,
+  },
+  infoRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'flex-start' as const,
+    gap: 12,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(193,200,194,0.2)',
+  },
+  infoText: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 14,
+    color: '#1c1c18',
+    flex: 1,
+  },
+  infoAction: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 12,
+    color: '#546b00',
+    marginTop: 4,
+  },
+  // ── Location picker (franchise) ──
+  locationPicker: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(193,200,194,0.3)',
+  },
+  locationPickerLabel: {
+    fontFamily: 'Manrope-Medium',
+    fontSize: 10,
+    color: '#727973',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.8,
+  },
+  locationPickerValue: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 14,
+    color: '#032417',
+    marginTop: 1,
+  },
+  locationPickerBadge: {
+    backgroundColor: '#c7ef48',
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  locationPickerBadgeText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 10,
+    color: '#546b00',
+  },
+  locationDropdown: {
+    marginTop: 8,
+    backgroundColor: '#ffffff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(193,200,194,0.3)',
+    overflow: 'hidden' as const,
+  },
+  locationOption: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(193,200,194,0.15)',
+  },
+  locationOptionActive: {
+    backgroundColor: 'rgba(199,239,72,0.1)',
+  },
+  locationOptionName: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 14,
+    color: '#032417',
+  },
+  locationOptionNameActive: {
+    color: '#546b00',
+  },
+  locationOptionMeta: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 11,
+    color: '#727973',
+    marginTop: 1,
+  },
+  locationShowAll: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 4,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(193,200,194,0.2)',
+  },
+  locationShowAllText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 13,
+    color: '#546b00',
+  },
 });

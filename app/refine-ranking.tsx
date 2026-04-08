@@ -115,7 +115,7 @@ export default function RefineRankingScreen() {
       queryClient.invalidateQueries({ queryKey: ['ranking', currentUser?.id] });
       queryClient.invalidateQueries({ queryKey: ['feed'] });
     } catch (e) {
-      console.error('recompute error', e);
+      if (__DEV__) console.error('recompute error', e);
     } finally {
       setSaving(false);
     }
@@ -142,7 +142,7 @@ export default function RefineRankingScreen() {
           { id: lower.id, rank_position: lower.rank_position, rank_score: lower.rank_score }
         );
       } catch (e) {
-        console.error('swap error', e);
+        if (__DEV__) console.error('swap error', e);
       }
       await advance(true);
     } else {
@@ -216,7 +216,7 @@ export default function RefineRankingScreen() {
                 router.navigate('/ranking');
               }}
             >
-              <Text style={styles.successBtnText}>Ver ranking →</Text>
+              <Text style={styles.successBtnText}>Ver historial →</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.successSecondaryBtn}

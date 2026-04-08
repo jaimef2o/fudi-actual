@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Notification Triggers — sends push notifications for key social events.
  *
@@ -31,8 +30,8 @@ async function sendPush(messages: PushMessage[]): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(messages),
     });
-  } catch {
-    // Non-fatal — push delivery is best-effort
+  } catch (err) {
+    if (__DEV__) console.warn('[savry] Push notification send failed:', err);
   }
 }
 
@@ -48,7 +47,7 @@ async function getTokens(userIds: string[]): Promise<Map<string, string>> {
     .not('push_token', 'is', null);
 
   const map = new Map<string, string>();
-  for (const u of (data ?? [])) {
+  for (const u of (data ?? []) as { id: string; push_token: string | null }[]) {
     if (u.push_token) map.set(u.id, u.push_token);
   }
   return map;
@@ -78,9 +77,9 @@ export async function notifyNewVisit(
     .select('user_id')
     .eq('target_id', userId);
 
-  const followMeSet = new Set((followMe ?? []).map((r: any) => r.user_id));
+  const followMeSet = new Set((followMe ?? []).map((r: { user_id: string }) => r.user_id));
   const mutualIds = (iFollow ?? [])
-    .map((r: any) => r.target_id)
+    .map((r: { target_id: string }) => r.target_id)
     .filter((id: string) => followMeSet.has(id));
 
   const tokens = await getTokens(mutualIds);
@@ -128,21 +127,28 @@ export async function notifyTaggedInVisit(
 
 /**
  * Notify a user when someone follows them.
- * "Javier quiere seguirte en fudi"
+ * Pending (private target): "Javier quiere seguirte en savry"
+ * Active (public target):   "Javier te ha empezado a seguir"
  */
 export async function notifyNewFollower(
   followerName: string,
-  targetUserId: string
+  targetUserId: string,
+  isPending: boolean = false
 ): Promise<void> {
   const tokens = await getTokens([targetUserId]);
   const token = tokens.get(targetUserId);
   if (!token) return;
 
+  const title = isPending ? 'Nueva solicitud' : 'Nuevo seguidor';
+  const body = isPending
+    ? `${followerName} quiere seguirte en savry`
+    : `${followerName} te ha empezado a seguir`;
+
   await sendPush([{
     to: token,
-    title: 'Nueva solicitud',
-    body: `${followerName} quiere seguirte en fudi`,
-    data: { type: 'follow_request' },
+    title,
+    body,
+    data: { type: isPending ? 'follow_request' : 'new_follower' },
     sound: 'default',
   }]);
 }

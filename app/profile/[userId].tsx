@@ -24,19 +24,20 @@ import { getDisplayName } from '../../lib/utils/restaurantName';
 import { extractPriceLabel } from '../../lib/api/places';
 import { supabase } from '../../lib/supabase';
 import { scorePalette } from '../../lib/sentimentColors';
+import { COLORS } from '../../lib/theme/colors';
 
 const { width } = Dimensions.get('window');
 const GRID_CELL = (width - 4) / 3;
 
 
-const RANK_COLORS = ['#c7ef48', '#f7f3ec', '#f7f3ec'];
-const RANK_TEXT_COLORS = ['#546b00', '#032417', '#032417'];
+const RANK_COLORS = [COLORS.secondaryContainer, COLORS.surfaceContainerLow, COLORS.surfaceContainerLow];
+const RANK_TEXT_COLORS = [COLORS.onSecondaryContainer, COLORS.primary, COLORS.primary];
 
 // ── MAIN SCREEN ───────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
-  const [activeTab, setActiveTab] = useState<'favoritos' | 'publicaciones'>('favoritos');
+  const [activeTab, setActiveTab] = useState<'favoritos' | 'publicaciones'>('publicaciones');
   const [isFriend, setIsFriend] = useState(false);
 
   const currentUser = useAppStore((s) => s.currentUser);
@@ -54,9 +55,11 @@ export default function ProfileScreen() {
   const { data: followerCount = 0 } = useFollowerCount(profileUserId || undefined);
   const { data: followingCount = 0 } = useFollowingCount(profileUserId || undefined);
 
-  const relType = (relationship as any)?.type ?? null; // null | 'following' | 'mutual'
-  const isMutualFriend = relType === 'mutual';
-  const isFollowing = relType !== null;
+  // relationship is a RelationshipStatus: 'none' | 'pending' | 'following' | 'mutual'
+  const relStatus = (relationship as string) ?? 'none';
+  const isMutualFriend = relStatus === 'mutual';
+  const isFollowing = relStatus === 'following' || relStatus === 'mutual';
+  const isPending = relStatus === 'pending';
 
   // Build display data from real DB data — no mock fallbacks
   const profileName = (realProfile as any)?.name || 'Usuario';
@@ -128,10 +131,31 @@ export default function ProfileScreen() {
 
   async function handleFollowToggle() {
     if (!currentUser?.id || !profileUserId) return;
-    if (isFollowing) {
+
+    if (isPending) {
+      // Cancel pending request
+      showAlert(
+        'Cancelar solicitud',
+        `¿Cancelar la solicitud de seguimiento a ${profileName}?`,
+        [
+          { text: 'No', style: 'cancel' },
+          {
+            text: 'Cancelar solicitud',
+            style: 'destructive',
+            onPress: async () => {
+              try { await unfollow(profileUserId); } catch (e: any) {
+                showAlert('Error', e.message ?? 'No se pudo completar la acción.');
+              }
+            },
+          },
+        ]
+      );
+    } else if (isFollowing) {
       showAlert(
         isMutualFriend ? 'Dejar de ser amigos' : 'Dejar de seguir',
-        `¿Dejar de seguir a ${profileName}?`,
+        isMutualFriend
+          ? `Si dejas de seguir a ${profileName}, dejaréis de ser amigos mutuos.`
+          : `¿Dejar de seguir a ${profileName}?`,
         [
           { text: 'Cancelar', style: 'cancel' },
           {
@@ -153,11 +177,11 @@ export default function ProfileScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
-          <MaterialIcons name="arrow-back" size={24} color="#032417" />
+          <MaterialIcons name="arrow-back" size={24} color={COLORS.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{isOwn ? 'Perfil' : profileName}</Text>
         <TouchableOpacity
@@ -168,7 +192,7 @@ export default function ProfileScreen() {
             } else {
               Share.share({
                 title: profileName,
-                message: `Mira el perfil de ${profileName} en fudi`,
+                message: `Mira el perfil de ${profileName} en savry`,
               });
             }
           }}
@@ -176,7 +200,7 @@ export default function ProfileScreen() {
           <MaterialIcons
             name={isOwn ? 'settings' : 'ios-share'}
             size={24}
-            color="#032417"
+            color={COLORS.primary}
           />
         </TouchableOpacity>
       </View>
@@ -190,8 +214,8 @@ export default function ProfileScreen() {
               {profileAvatar ? (
                 <Image source={{ uri: profileAvatar }} style={styles.profileAvatar} />
               ) : (
-                <View style={[styles.profileAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-                  <MaterialIcons name="person" size={40} color="#727973" />
+                <View style={[styles.profileAvatar, { backgroundColor: COLORS.surfaceContainerHighest, alignItems: 'center', justifyContent: 'center' }]}>
+                  <MaterialIcons name="person" size={40} color={COLORS.outline} />
                 </View>
               )}
             </View>
@@ -202,7 +226,7 @@ export default function ProfileScreen() {
             ) : null}
             {profileCity ? (
               <View style={styles.locationRow}>
-                <MaterialIcons name="location-on" size={13} color="#727973" />
+                <MaterialIcons name="location-on" size={13} color={COLORS.outline} />
                 <Text style={styles.locationInfoText}>{profileCity}</Text>
               </View>
             ) : null}
@@ -226,11 +250,11 @@ export default function ProfileScreen() {
                 paddingVertical: 6,
                 borderRadius: 12,
               }}>
-                <MaterialIcons name={tasteLevel.icon as any} size={14} color={tasteLevel.level >= 3 ? '#546b00' : '#727973'} />
+                <MaterialIcons name={tasteLevel.icon as any} size={14} color={tasteLevel.level >= 3 ? COLORS.onSecondaryContainer : COLORS.outline} />
                 <Text style={{
                   fontFamily: 'Manrope-Bold',
                   fontSize: 11,
-                  color: tasteLevel.level >= 3 ? '#546b00' : '#727973',
+                  color: tasteLevel.level >= 3 ? COLORS.onSecondaryContainer : COLORS.outline,
                   textTransform: 'uppercase',
                   letterSpacing: 0.5,
                 }}>
@@ -242,10 +266,10 @@ export default function ProfileScreen() {
             {/* Progress to next level */}
             {remaining > 0 && (
               <View style={{ marginTop: 6, alignItems: 'center', gap: 4 }}>
-                <View style={{ width: 120, height: 3, backgroundColor: '#e6e2db', borderRadius: 2, overflow: 'hidden' }}>
-                  <View style={{ width: `${progress * 100}%` as any, height: '100%', backgroundColor: '#c7ef48', borderRadius: 2 }} />
+                <View style={{ width: 120, height: 3, backgroundColor: COLORS.surfaceContainerHighest, borderRadius: 2, overflow: 'hidden' }}>
+                  <View style={{ width: `${progress * 100}%` as any, height: '100%', backgroundColor: COLORS.secondaryContainer, borderRadius: 2 }} />
                 </View>
-                <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 10, color: '#c1c8c2' }}>
+                <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 10, color: COLORS.outlineVariant }}>
                   {remaining} visitas para el siguiente nivel
                 </Text>
               </View>
@@ -264,23 +288,39 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 style={[
                   styles.connectBtn,
-                  isMutualFriend ? styles.mutualBtn : isFollowing ? styles.followingBtn : null,
+                  isMutualFriend ? styles.mutualBtn
+                    : isPending ? styles.pendingBtn
+                    : isFollowing ? styles.followingBtn
+                    : null,
                 ]}
                 activeOpacity={0.8}
                 onPress={handleFollowToggle}
                 disabled={following || unfollowing}
               >
                 {(following || unfollowing) ? (
-                  <ActivityIndicator size="small" color={isFollowing ? '#546b00' : '#ffffff'} />
+                  <ActivityIndicator size="small" color={isFollowing || isPending ? COLORS.onSecondaryContainer : COLORS.onPrimary} />
                 ) : (
                   <>
                     <MaterialIcons
-                      name={isMutualFriend ? 'people' : isFollowing ? 'check' : 'person-add'}
+                      name={
+                        isMutualFriend ? 'people'
+                          : isPending ? 'schedule'
+                          : isFollowing ? 'check'
+                          : 'person-add'
+                      }
                       size={17}
-                      color={isFollowing ? '#546b00' : '#ffffff'}
+                      color={isMutualFriend || isPending ? COLORS.onSecondaryContainer : isFollowing ? COLORS.onSurfaceVariant : COLORS.onPrimary}
                     />
-                    <Text style={[styles.connectBtnText, isFollowing && styles.friendBtnText]}>
-                      {isMutualFriend ? 'Amigos' : isFollowing ? 'Siguiendo' : 'Seguir'}
+                    <Text style={[
+                      styles.connectBtnText,
+                      isMutualFriend && styles.mutualBtnText,
+                      isPending && styles.pendingBtnText,
+                      isFollowing && !isMutualFriend && styles.followingBtnText,
+                    ]}>
+                      {isMutualFriend ? 'Amigos'
+                        : isPending ? 'Solicitado'
+                        : isFollowing ? 'Siguiendo'
+                        : 'Seguir'}
                     </Text>
                   </>
                 )}
@@ -300,15 +340,15 @@ export default function ProfileScreen() {
               <Text style={styles.statLabel}>MEDIA</Text>
             </View>
             <View style={styles.statDivider} />
-            <View style={styles.statItem}>
+            <TouchableOpacity style={styles.statItem} activeOpacity={0.7} onPress={() => router.push('/(tabs)/amigos')}>
               <Text style={styles.statValue}>{followerCount}</Text>
               <Text style={styles.statLabel}>SEGUIDORES</Text>
-            </View>
+            </TouchableOpacity>
             <View style={styles.statDivider} />
-            <View style={styles.statItem}>
+            <TouchableOpacity style={styles.statItem} activeOpacity={0.7} onPress={() => router.push('/(tabs)/amigos')}>
               <Text style={styles.statValue}>{followingCount}</Text>
               <Text style={styles.statLabel}>SIGUIENDO</Text>
-            </View>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -316,29 +356,29 @@ export default function ProfileScreen() {
         <View style={styles.tabsWrapper}>
           <View style={styles.tabsContainer}>
             <TouchableOpacity
-              style={[styles.tab, activeTab === 'favoritos' && styles.tabActive]}
-              onPress={() => setActiveTab('favoritos')}
-            >
-              <MaterialIcons
-                name="favorite"
-                size={16}
-                color={activeTab === 'favoritos' ? '#032417' : '#727973'}
-              />
-              <Text style={[styles.tabText, activeTab === 'favoritos' && styles.tabTextActive]}>
-                Favoritos
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.tab, activeTab === 'publicaciones' && styles.tabActive]}
               onPress={() => setActiveTab('publicaciones')}
             >
               <MaterialIcons
                 name="grid-on"
                 size={16}
-                color={activeTab === 'publicaciones' ? '#032417' : '#727973'}
+                color={activeTab === 'publicaciones' ? COLORS.primary : COLORS.outline}
               />
               <Text style={[styles.tabText, activeTab === 'publicaciones' && styles.tabTextActive]}>
                 Publicaciones
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, activeTab === 'favoritos' && styles.tabActive]}
+              onPress={() => setActiveTab('favoritos')}
+            >
+              <MaterialIcons
+                name="bookmark"
+                size={16}
+                color={activeTab === 'favoritos' ? COLORS.primary : COLORS.outline}
+              />
+              <Text style={[styles.tabText, activeTab === 'favoritos' && styles.tabTextActive]}>
+                Favoritos
               </Text>
             </TouchableOpacity>
           </View>
@@ -346,11 +386,11 @@ export default function ProfileScreen() {
 
         {/* Tab content */}
         {profileLoading || rankingLoading || feedLoading ? (
-          <ActivityIndicator size="large" color="#032417" style={{ marginTop: 40 }} />
+          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
         ) : activeTab === 'favoritos' ? (
-          <FavoritosTab restaurants={topRestaurants} showRankingLink={isOwn} />
+          <FavoritosTab restaurants={topRestaurants} showRankingLink={isOwn} targetUserId={profileUserId} />
         ) : (
-          <PublicacionesTab posts={publicaciones} />
+          <PublicacionesTab posts={publicaciones} isOwn={isOwn} userName={profileName} />
         )}
 
         <View style={{ height: 100 }} />
@@ -364,9 +404,11 @@ export default function ProfileScreen() {
 function FavoritosTab({
   restaurants,
   showRankingLink,
+  targetUserId,
 }: {
   restaurants: { id: string | number; name: string; neighborhood: string; cuisine: string | null; price?: string | null; score: number; image: string | null }[];
   showRankingLink: boolean;
+  targetUserId: string;
 }) {
   return (
     <View style={styles.favSection}>
@@ -381,8 +423,8 @@ function FavoritosTab({
             {restaurant.image ? (
               <Image source={{ uri: restaurant.image }} style={styles.favImage} resizeMode="cover" />
             ) : (
-              <View style={[styles.favImage, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-                <MaterialIcons name="restaurant" size={36} color="#c1c8c2" />
+              <View style={[styles.favImage, { backgroundColor: COLORS.surfaceContainerHighest, alignItems: 'center', justifyContent: 'center' }]}>
+                <MaterialIcons name="restaurant" size={36} color={COLORS.outlineVariant} />
               </View>
             )}
             <View style={styles.favOverlay} />
@@ -410,37 +452,41 @@ function FavoritosTab({
       <TouchableOpacity
         style={styles.verTodoBtn}
         activeOpacity={0.85}
-        onPress={() => router.push('/ranking')}
+        onPress={() => router.push(showRankingLink ? '/ranking' : (`/ranking?userId=${targetUserId}` as any))}
       >
-        <MaterialIcons name="format-list-numbered" size={18} color="#032417" />
+        <MaterialIcons name="format-list-numbered" size={18} color={COLORS.primary} />
         <Text style={styles.verTodoBtnText}>
-          {showRankingLink ? 'Ver mi ranking completo' : 'Ver su ranking completo'}
+          {showRankingLink ? 'Ver mi historial completo' : 'Ver su historial completo'}
         </Text>
-        <MaterialIcons name="arrow-forward" size={18} color="#032417" />
+        <MaterialIcons name="arrow-forward" size={18} color={COLORS.primary} />
       </TouchableOpacity>
     </View>
   );
 }
 
-function PublicacionesTab({ posts }: { posts: { id: string; image: string | null; coverImage: string | null; restaurantName: string; score: number | null; note: string | null }[] }) {
+function PublicacionesTab({ posts, isOwn, userName }: { posts: { id: string; image: string | null; coverImage: string | null; restaurantName: string; score: number | null; note: string | null }[]; isOwn: boolean; userName: string }) {
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
   if (posts.length === 0) {
     return (
       <View style={{ alignItems: 'center', paddingVertical: 48, paddingHorizontal: 32, gap: 10 }}>
-        <MaterialIcons name="grid-on" size={40} color="#e6e2db" />
-        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 16, color: '#032417', textAlign: 'center' }}>
+        <MaterialIcons name="grid-on" size={40} color={COLORS.surfaceContainerHighest} />
+        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 16, color: COLORS.primary, textAlign: 'center' }}>
           Sin publicaciones todavía
         </Text>
-        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973', textAlign: 'center', lineHeight: 19 }}>
-          Tus visitas aparecerán aquí cuando registres una.
+        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: COLORS.outline, textAlign: 'center', lineHeight: 19 }}>
+          {isOwn
+            ? 'Tus visitas aparecerán aquí cuando registres una.'
+            : `${userName} aún no ha publicado visitas.`}
         </Text>
-        <TouchableOpacity
-          style={{ marginTop: 8, backgroundColor: '#032417', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}
-          onPress={() => router.push('/registrar-visita')}
-        >
-          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>Registrar visita</Text>
-        </TouchableOpacity>
+        {isOwn && (
+          <TouchableOpacity
+            style={{ marginTop: 8, backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}
+            onPress={() => router.push('/registrar-visita')}
+          >
+            <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.onPrimary }}>Registrar visita</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
@@ -515,7 +561,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontFamily: 'Manrope-Bold',
     fontSize: 18,
-    color: '#032417',
+    color: COLORS.primary,
   },
 
   // Hero
@@ -534,7 +580,7 @@ const styles = StyleSheet.create({
     height: 96,
     borderRadius: 48,
     borderWidth: 3,
-    borderColor: '#c7ef48',
+    borderColor: COLORS.secondaryContainer,
   },
   affinityRing: {
     position: 'absolute',
@@ -544,24 +590,24 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 3,
-    borderColor: '#fdf9f2',
+    borderColor: COLORS.surface,
   },
-  affinityRingHigh: { backgroundColor: '#c7ef48' },
-  affinityRingLow: { backgroundColor: '#e6e2db' },
+  affinityRingHigh: { backgroundColor: COLORS.secondaryContainer },
+  affinityRingLow: { backgroundColor: COLORS.surfaceContainerHighest },
   profileName: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 24,
-    color: '#032417',
+    color: COLORS.primary,
   },
   profileLocation: {
     fontFamily: 'Manrope-Regular',
     fontSize: 14,
-    color: '#727973',
+    color: COLORS.outline,
   },
   profileHandle: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 15,
-    color: '#516600',
+    color: COLORS.secondary,
     marginTop: 3,
     letterSpacing: 0.2,
   },
@@ -580,12 +626,12 @@ const styles = StyleSheet.create({
   locationInfoText: {
     fontFamily: 'Manrope-Medium',
     fontSize: 13,
-    color: '#727973',
+    color: COLORS.outline,
   },
   profileBio: {
     fontFamily: 'Manrope-Regular',
     fontSize: 13,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
     textAlign: 'center',
     lineHeight: 19,
     paddingHorizontal: 12,
@@ -594,7 +640,7 @@ const styles = StyleSheet.create({
   profileTitle: {
     fontFamily: 'Manrope-Bold',
     fontSize: 10,
-    color: '#727973',
+    color: COLORS.outline,
     textTransform: 'uppercase',
     letterSpacing: 2,
     textAlign: 'center',
@@ -612,32 +658,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#e6e2db',
+    backgroundColor: COLORS.surfaceContainerHighest,
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 999,
     marginTop: 2,
   },
   affinityPillHigh: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
   },
   affinityPillLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 10,
-    color: '#727973',
+    color: COLORS.outline,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
   affinityPillScore: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 14,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
   },
   affinityPillScoreHigh: {
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   levelBadge: {
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 8,
@@ -645,12 +691,12 @@ const styles = StyleSheet.create({
   levelBadgeText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 11,
-    color: '#032417',
+    color: COLORS.primary,
   },
 
   // Buttons
   editBtn: {
-    backgroundColor: '#032417',
+    backgroundColor: COLORS.primary,
     paddingVertical: 10,
     paddingHorizontal: 28,
     borderRadius: 999,
@@ -659,46 +705,54 @@ const styles = StyleSheet.create({
   editBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
   },
   connectBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#032417',
+    backgroundColor: COLORS.primary,
     paddingVertical: 12,
     paddingHorizontal: 32,
     borderRadius: 999,
     marginTop: 4,
   },
-  friendBtn: {
-    backgroundColor: '#c7ef48',
-  },
   mutualBtn: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
+  },
+  pendingBtn: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: COLORS.secondaryContainer,
   },
   followingBtn: {
     backgroundColor: 'transparent',
     borderWidth: 1.5,
-    borderColor: '#c7ef48',
+    borderColor: COLORS.surfaceContainerHighest,
   },
   connectBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 15,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
   },
-  friendBtnText: {
-    color: '#546b00',
+  mutualBtnText: {
+    color: COLORS.onSecondaryContainer,
+  },
+  pendingBtnText: {
+    color: COLORS.onSecondaryContainer,
+  },
+  followingBtnText: {
+    color: COLORS.onSurfaceVariant,
   },
 
   // Stats
   statsRow: {
     flexDirection: 'row',
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     marginHorizontal: 24,
     borderRadius: 16,
     padding: 20,
-    shadowColor: '#1c1c18',
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.06,
     shadowRadius: 8,
@@ -709,12 +763,12 @@ const styles = StyleSheet.create({
   statValue: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 22,
-    color: '#032417',
+    color: COLORS.primary,
   },
   statLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 9,
-    color: '#727973',
+    color: COLORS.outline,
     textTransform: 'uppercase',
     letterSpacing: 1.5,
     textAlign: 'center',
@@ -728,13 +782,13 @@ const styles = StyleSheet.create({
   // En común
   // Tabs
   tabsWrapper: {
-    backgroundColor: '#fdf9f2',
+    backgroundColor: COLORS.surface,
     paddingHorizontal: 24,
     paddingVertical: 12,
   },
   tabsContainer: {
     flexDirection: 'row',
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 12,
     padding: 4,
   },
@@ -748,8 +802,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   tabActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#000',
+    backgroundColor: COLORS.surfaceContainerLowest,
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
     shadowRadius: 2,
@@ -758,9 +812,9 @@ const styles = StyleSheet.create({
   tabText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#727973',
+    color: COLORS.outline,
   },
-  tabTextActive: { color: '#032417' },
+  tabTextActive: { color: COLORS.primary },
 
   // Favoritos
   favSection: {
@@ -771,7 +825,7 @@ const styles = StyleSheet.create({
   favCard: {
     borderRadius: 20,
     overflow: 'hidden',
-    shadowColor: '#1c1c18',
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.10,
     shadowRadius: 16,
@@ -798,7 +852,7 @@ const styles = StyleSheet.create({
   scoreBadge: {
     position: 'absolute',
     top: 14, right: 14,
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 999,
@@ -806,7 +860,7 @@ const styles = StyleSheet.create({
   scoreBadgeText: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 16,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   favInfoOverlay: {
     position: 'absolute',
@@ -817,13 +871,13 @@ const styles = StyleSheet.create({
   favCuisine: {
     fontFamily: 'Manrope-Bold',
     fontSize: 9,
-    color: '#c7ef48',
+    color: COLORS.secondaryContainer,
     letterSpacing: 2,
   },
   favName: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 22,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
     lineHeight: 28,
   },
   favNeighborhood: {
@@ -836,7 +890,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 14,
     paddingVertical: 16,
     marginTop: 4,
@@ -844,7 +898,7 @@ const styles = StyleSheet.create({
   verTodoBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
-    color: '#032417',
+    color: COLORS.primary,
   },
 
   // Actividad grid
@@ -864,7 +918,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     borderRadius: 999,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -872,7 +926,7 @@ const styles = StyleSheet.create({
   gridScoreText: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
 
   // Note overlay — bottom gradient + italic quote
@@ -896,7 +950,7 @@ const styles = StyleSheet.create({
   gridImagePlaceholder: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 8,
@@ -905,19 +959,19 @@ const styles = StyleSheet.create({
   gridPlaceholderName: {
     fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 9,
-    color: '#032417',
+    color: COLORS.primary,
     textAlign: 'center',
     lineHeight: 13,
   },
   gridPlaceholderNote: {
     fontFamily: 'NotoSerif-Italic',
     fontSize: 8,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
     textAlign: 'center',
     lineHeight: 12,
   },
   gridPlaceholderBadge: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     borderRadius: 999,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -926,6 +980,6 @@ const styles = StyleSheet.create({
   gridPlaceholderScore: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
 });

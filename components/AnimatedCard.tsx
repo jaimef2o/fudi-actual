@@ -4,7 +4,7 @@
  * should feel alive when tapped (Instagram / Airbnb style).
  */
 import { useRef } from 'react';
-import { Animated, TouchableOpacity, ViewStyle } from 'react-native';
+import { Animated, TouchableOpacity, ViewStyle, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
 interface AnimatedCardProps {
@@ -32,7 +32,7 @@ export function AnimatedCard({
   function handlePressIn() {
     Animated.spring(scale, {
       toValue: 0.965,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
       speed: 50,
       bounciness: 0,
     }).start();
@@ -44,7 +44,7 @@ export function AnimatedCard({
   function handlePressOut() {
     Animated.spring(scale, {
       toValue: 1,
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
       speed: 18,
       bounciness: 10,
     }).start();

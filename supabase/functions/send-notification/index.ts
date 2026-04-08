@@ -88,8 +88,8 @@ Deno.serve(async (req) => {
           to: target.push_token,
           title: isAccepted ? '¡Nueva amistad!' : 'Nueva solicitud de seguimiento',
           body: isAccepted
-            ? `${follower.name} y tú ahora sois amigos en fudi`
-            : `${follower.name} quiere seguirte en fudi`,
+            ? `${follower.name} y tú ahora sois amigos en savry`
+            : `${follower.name} quiere seguirte en savry`,
           sound: 'default',
           data: { screen: 'amigos', userId: followerId },
         });

@@ -10,18 +10,21 @@ import {
   KeyboardAvoidingView,
   ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Svg, { Circle } from 'react-native-svg';
 import { CityPicker } from '../components/CityPicker';
 import { PRICE_SYMBOLS } from '../components/PriceFilterChips';
 import { InfoTag } from '../components/InfoTag';
 import { useAppStore } from '../store';
 import { useUserRanking } from '../lib/hooks/useVisit';
+import { useProfile } from '../lib/hooks/useProfile';
 import { sentimentPalette } from '../lib/sentimentColors';
 import { getDisplayName } from '../lib/utils/restaurantName';
 import { extractPriceLabel } from '../lib/api/places';
+import { ShareCard, ShareCardHandle } from '../components/ShareCard';
+import { COLORS } from '../lib/theme/colors';
 
 function MiniCircularScore({ score, sentiment }: { score: number; sentiment?: string | null }) {
   const radius = 18;
@@ -32,7 +35,7 @@ function MiniCircularScore({ score, sentiment }: { score: number; sentiment?: st
   return (
     <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={48} height={48} style={{ transform: [{ rotate: '-90deg' }] }}>
-        <Circle cx={24} cy={24} r={radius} stroke="#ebe8e1" strokeWidth={3} fill="transparent" />
+        <Circle cx={24} cy={24} r={radius} stroke={COLORS.surfaceContainerHigh} strokeWidth={3} fill="transparent" />
         <Circle
           cx={24}
           cy={24}
@@ -58,8 +61,14 @@ const PRICE_DESCS: Record<string, string> = {
 };
 
 export default function RankingScreen() {
+  const { userId: paramUserId } = useLocalSearchParams<{ userId?: string }>();
   const currentUser = useAppStore((s) => s.currentUser);
-  const { data: ranking = [], isLoading, isError, refetch } = useUserRanking(currentUser?.id);
+  const targetUserId = paramUserId && paramUserId !== currentUser?.id ? paramUserId : currentUser?.id;
+  const isOwn = !paramUserId || paramUserId === currentUser?.id;
+  const { data: ranking = [], isLoading, isError, refetch } = useUserRanking(targetUserId);
+  const { data: targetProfile } = useProfile(isOwn ? undefined : targetUserId);
+  const targetName = isOwn ? null : (targetProfile as any)?.name ?? 'Usuario';
+  const shareRef = useRef<ShareCardHandle>(null);
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [activeCity, setActiveCity] = useState('');
@@ -106,41 +115,67 @@ export default function RankingScreen() {
 
   if (isError) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#fdf9f2', justifyContent: 'center', alignItems: 'center', gap: 16, padding: 32 }}>
-        <MaterialIcons name="error-outline" size={48} color="#c1c8c2" />
-        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417', textAlign: 'center' }}>
+      <View style={{ flex: 1, backgroundColor: COLORS.surface, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 32 }}>
+        <MaterialIcons name="error-outline" size={48} color={COLORS.outlineVariant} />
+        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary, textAlign: 'center' }}>
           Error al cargar tu ranking
         </Text>
         <TouchableOpacity
           onPress={() => refetch()}
-          style={{ backgroundColor: '#c7ef48', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}
+          style={{ backgroundColor: COLORS.secondaryContainer, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}
         >
-          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417' }}>Reintentar</Text>
+          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.primary }}>Reintentar</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.back()} style={{ paddingVertical: 8 }}>
-          <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 14, color: '#727973', textDecorationLine: 'underline' }}>Volver</Text>
+          <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 14, color: COLORS.outline, textDecorationLine: 'underline' }}>Volver</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
-          <MaterialIcons name="arrow-back" size={24} color="#032417" />
+          <MaterialIcons name="arrow-back" size={24} color={COLORS.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Ranking</Text>
-        <TouchableOpacity
-          style={styles.rankBtn}
-          activeOpacity={0.8}
-          onPress={() => router.push('/refine-ranking')}
-        >
-          <MaterialIcons name="tune" size={16} color="#032417" />
-          <Text style={styles.rankBtnText}>Rank</Text>
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{isOwn ? 'Historial' : `Historial de ${targetName}`}</Text>
+        {isOwn ? (
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              style={styles.headerBtn}
+              activeOpacity={0.8}
+              onPress={() => shareRef.current?.share()}
+            >
+              <MaterialIcons name="ios-share" size={22} color={COLORS.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.rankBtn}
+              activeOpacity={0.8}
+              onPress={() => router.push('/refine-ranking')}
+            >
+              <MaterialIcons name="tune" size={16} color={COLORS.primary} />
+              <Text style={styles.rankBtnText}>Rank</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.headerBtn} />
+        )}
       </View>
+
+      {/* Share card (offscreen, rendered for screenshot capture) */}
+      <ShareCard
+        ref={shareRef}
+        type="ranking"
+        userName={currentUser?.name ?? 'Mi ranking'}
+        userId={currentUser?.id ?? ''}
+        items={filteredRestaurants.slice(0, 5).map((r) => ({
+          name: getDisplayName({ name: r.name }, 'ranking'),
+          score: r.score,
+          sentiment: (r.sentiment ?? 'fine') as 'loved' | 'fine' | 'disliked',
+        }))}
+      />
 
       {/* Filter modal — unified */}
       <Modal visible={filterOpen} animationType="slide" transparent onRequestClose={() => setFilterOpen(false)}>
@@ -157,7 +192,7 @@ export default function RankingScreen() {
               </TouchableOpacity>
               <Text style={ms.sheetTitle}>Filtros</Text>
               <TouchableOpacity onPress={() => setFilterOpen(false)}>
-                <MaterialIcons name="close" size={22} color="#032417" />
+                <MaterialIcons name="close" size={22} color={COLORS.primary} />
               </TouchableOpacity>
             </View>
 
@@ -208,7 +243,7 @@ export default function RankingScreen() {
 
       {isLoading && (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#032417" />
+          <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
       )}
 
@@ -221,7 +256,7 @@ export default function RankingScreen() {
               onPress={openFilter}
               activeOpacity={0.75}
             >
-              <MaterialIcons name="tune" size={15} color={totalFilters > 0 ? '#546b00' : '#424844'} />
+              <MaterialIcons name="tune" size={15} color={totalFilters > 0 ? COLORS.onSecondaryContainer : COLORS.onSurfaceVariant} />
               <Text style={[styles.controlBtnText, totalFilters > 0 && styles.controlBtnTextActive]}>
                 Filtros{totalFilters > 0 ? ` (${totalFilters})` : ''}
               </Text>
@@ -241,18 +276,18 @@ export default function RankingScreen() {
             <View style={styles.activePillsRow}>
               {activeCity.trim() !== '' && (
                 <TouchableOpacity
-                  style={[styles.activePill, { backgroundColor: '#1a3a2b' }]}
+                  style={[styles.activePill, { backgroundColor: COLORS.primaryContainer }]}
                   onPress={() => setActiveCity('')}
                 >
-                  <MaterialIcons name="location-on" size={13} color="#c7ef48" />
-                  <Text style={[styles.activePillText, { color: '#c7ef48' }]}>{activeCity}</Text>
-                  <MaterialIcons name="close" size={13} color="#c7ef48" />
+                  <MaterialIcons name="location-on" size={13} color={COLORS.secondaryContainer} />
+                  <Text style={[styles.activePillText, { color: COLORS.secondaryContainer }]}>{activeCity}</Text>
+                  <MaterialIcons name="close" size={13} color={COLORS.secondaryContainer} />
                 </TouchableOpacity>
               )}
               {activePrice !== '' && (
                 <TouchableOpacity style={styles.activePill} onPress={() => setActivePrice('')}>
                   <Text style={styles.activePillText}>{activePrice}</Text>
-                  <MaterialIcons name="close" size={13} color="#546b00" />
+                  <MaterialIcons name="close" size={13} color={COLORS.onSecondaryContainer} />
                 </TouchableOpacity>
               )}
             </View>
@@ -262,7 +297,7 @@ export default function RankingScreen() {
           <View style={styles.list}>
             {filteredRestaurants.length === 0 && (
               <View style={styles.emptyState}>
-                <MaterialIcons name={restaurants.length === 0 ? 'restaurant' : 'search-off'} size={40} color="#c1c8c2" />
+                <MaterialIcons name={restaurants.length === 0 ? 'restaurant' : 'search-off'} size={40} color={COLORS.outlineVariant} />
                 <Text style={styles.emptyTitle}>
                   {restaurants.length === 0 ? 'Aún no has visitado nada' : 'Sin resultados'}
                 </Text>
@@ -273,10 +308,10 @@ export default function RankingScreen() {
                 </Text>
                 {restaurants.length === 0 && (
                   <TouchableOpacity
-                    style={{ marginTop: 16, backgroundColor: '#032417', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 12 }}
+                    style={{ marginTop: 16, backgroundColor: COLORS.primary, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 12 }}
                     onPress={() => router.push('/registrar-visita')}
                   >
-                    <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>
+                    <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.onPrimary }}>
                       Registrar visita
                     </Text>
                   </TouchableOpacity>
@@ -296,7 +331,7 @@ export default function RankingScreen() {
                       <Image source={{ uri: restaurant.image }} style={styles.rankImage} />
                     ) : (
                       <View style={[styles.rankImage, styles.rankImagePlaceholder]}>
-                        <MaterialIcons name="restaurant" size={20} color="#424844" />
+                        <MaterialIcons name="restaurant" size={20} color={COLORS.onSurfaceVariant} />
                       </View>
                     )}
                     <View style={[styles.rankNumber, idx === 0 ? styles.rankNumber1 : styles.rankNumberOther]}>
@@ -348,13 +383,13 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontFamily: 'Manrope-Bold',
     fontSize: 18,
-    color: '#032417',
+    color: COLORS.primary,
   },
   rankBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
@@ -362,7 +397,7 @@ const styles = StyleSheet.create({
   rankBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#032417',
+    color: COLORS.primary,
   },
   container: {
     paddingTop: Platform.OS === 'ios' ? 124 : 104,
@@ -382,27 +417,27 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 999,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderWidth: 1,
     borderColor: 'rgba(193,200,194,0.3)',
   },
   controlBtnActive: {
-    backgroundColor: '#c7ef48',
-    borderColor: '#aed52e',
+    backgroundColor: COLORS.secondaryContainer,
+    borderColor: COLORS.secondaryFixedDim,
   },
   controlBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 11,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  controlBtnTextActive: { color: '#546b00' },
+  controlBtnTextActive: { color: COLORS.onSecondaryContainer },
   clearBtn: {
     width: 34,
     height: 34,
     borderRadius: 999,
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -416,7 +451,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
@@ -424,7 +459,7 @@ const styles = StyleSheet.create({
   activePillText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 12,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   list: { gap: 10 },
   emptyState: {
@@ -435,19 +470,19 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 18,
-    color: '#032417',
+    color: COLORS.primary,
   },
   emptyText: {
     fontFamily: 'Manrope-Regular',
     fontSize: 14,
-    color: '#727973',
+    color: COLORS.outline,
     textAlign: 'center',
   },
   rankItem: {
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 12,
     overflow: 'hidden',
-    shadowColor: '#1c1c18',
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.04,
     shadowRadius: 8,
@@ -465,7 +500,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   rankImagePlaceholder: {
-    backgroundColor: '#e6e2db',
+    backgroundColor: COLORS.surfaceContainerHighest,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -479,32 +514,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rankNumber1: { backgroundColor: '#c7ef48' },
-  rankNumberOther: { backgroundColor: '#e6e2db' },
+  rankNumber1: { backgroundColor: COLORS.secondaryContainer },
+  rankNumberOther: { backgroundColor: COLORS.surfaceContainerHighest },
   rankNumberText: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 10,
   },
-  rankNumberText1: { color: '#032417' },
-  rankNumberTextOther: { color: '#424844' },
+  rankNumberText1: { color: COLORS.primary },
+  rankNumberTextOther: { color: COLORS.onSurfaceVariant },
   rankName: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 16,
-    color: '#032417',
+    color: COLORS.primary,
     marginBottom: 5,
   },
   miniScoreText: {
     position: 'absolute',
     fontFamily: 'NotoSerif-Bold',
     fontSize: 11,
-    color: '#032417',
+    color: COLORS.primary,
   },
 });
 
 const ms = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
-    backgroundColor: '#fdf9f2',
+    backgroundColor: COLORS.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 24,
@@ -514,7 +549,7 @@ const ms = StyleSheet.create({
   handle: {
     width: 40,
     height: 4,
-    backgroundColor: '#e6e2db',
+    backgroundColor: COLORS.surfaceContainerHighest,
     borderRadius: 2,
     alignSelf: 'center',
     marginVertical: 14,
@@ -525,8 +560,8 @@ const ms = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 24,
   },
-  sheetTitle: { fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417' },
-  resetText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#727973', textDecorationLine: 'underline' },
+  sheetTitle: { fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary },
+  resetText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: COLORS.outline, textDecorationLine: 'underline' },
   sectionRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -536,12 +571,12 @@ const ms = StyleSheet.create({
   sectionLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 12,
-    color: '#727973',
+    color: COLORS.outline,
     paddingTop: 14,
     width: 48,
     flexShrink: 0,
   },
-  divider: { height: 1, backgroundColor: '#ebe8e1', marginBottom: 16 },
+  divider: { height: 1, backgroundColor: COLORS.surfaceContainerHigh, marginBottom: 16 },
   priceBtn: {
     alignItems: 'center',
     paddingVertical: 10,

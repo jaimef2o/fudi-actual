@@ -11,12 +11,12 @@ import {
   ActivityIndicator,
   Share,
   ViewToken,
-  TextInput,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import { showAlert } from '../../lib/utils/alerts';
+import { COLORS } from '../../lib/theme/colors';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { useVisit, useBookmark, useSavePost, useDeleteVisit, useSavedRestaurants } from '../../lib/hooks/useVisit';
@@ -26,7 +26,6 @@ import { scorePalette } from '../../lib/sentimentColors';
 import { InfoTag } from '../../components/InfoTag';
 import { getDisplayName } from '../../lib/utils/restaurantName';
 import * as Haptics from 'expo-haptics';
-import { useComments, useAddComment } from '../../lib/hooks/useComments';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HEADER_HEIGHT = Platform.OS === 'ios' ? 108 : 88;
@@ -76,9 +75,6 @@ export default function VisitScreen() {
   const restaurantSaved = pendingRestaurantSaved !== null ? pendingRestaurantSaved : restaurantSavedFromDB;
   const { mutateAsync: toggleSavePost } = useSavePost(currentUser?.id);
   const { mutateAsync: deleteVisit, isPending: isDeleting } = useDeleteVisit();
-  const { data: comments } = useComments(id as string);
-  const { mutateAsync: postComment, isPending: commentPosting } = useAddComment(id as string);
-  const [commentText, setCommentText] = useState('');
 
   const isOwnPost = !!currentUser?.id && (visit as any)?.user_id === currentUser.id;
 
@@ -145,12 +141,12 @@ export default function VisitScreen() {
   async function handleShare() {
     const restaurantName = resolvedRestaurantName;
     const score = (visit as any)?.rank_score;
-    const postUrl = `https://fudi.app/visit/${id}`;
+    const postUrl = `https://savry.app/visit/${id}`;
     try {
       await Share.share({
-        message: `"${restaurantName}"${score != null ? ` — ${score.toFixed(1)}/10` : ''} en fudi.\n${postUrl}`,
+        message: `"${restaurantName}"${score != null ? ` — ${score.toFixed(1)}/10` : ''} en savry.\n${postUrl}`,
         url: postUrl,
-        title: `${restaurantName} en fudi`,
+        title: `${restaurantName} en savry`,
       });
     } catch {
       // user dismissed
@@ -203,28 +199,28 @@ export default function VisitScreen() {
   // ─── Render ──────────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#fdf9f2', justifyContent: 'center', alignItems: 'center', gap: 16 }}>
-        <ActivityIndicator size="large" color="#032417" />
-        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973' }}>Cargando publicación...</Text>
+      <View style={{ flex: 1, backgroundColor: COLORS.surface, justifyContent: 'center', alignItems: 'center', gap: 16 }}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
+        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: COLORS.outline }}>Cargando publicación...</Text>
       </View>
     );
   }
 
   if (!visit && !isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#fdf9f2', justifyContent: 'center', alignItems: 'center', gap: 16, padding: 32 }}>
-        <MaterialIcons name="error-outline" size={48} color="#c1c8c2" />
-        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417', textAlign: 'center' }}>
+      <View style={{ flex: 1, backgroundColor: COLORS.surface, justifyContent: 'center', alignItems: 'center', gap: 16, padding: 32 }}>
+        <MaterialIcons name="error-outline" size={48} color={COLORS.outlineVariant} />
+        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary, textAlign: 'center' }}>
           Publicación no encontrada
         </Text>
-        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center' }}>
+        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: COLORS.outline, textAlign: 'center' }}>
           Esta publicación no existe o ya no está disponible.
         </Text>
-        <TouchableOpacity onPress={() => router.back()} style={{ backgroundColor: '#032417', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}>
-          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>Volver</Text>
+        <TouchableOpacity onPress={() => router.back()} style={{ backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}>
+          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.onPrimary }}>Volver</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => router.replace('/(tabs)/feed')} style={{ paddingVertical: 8 }}>
-          <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 14, color: '#727973', textDecorationLine: 'underline' }}>Ir al feed</Text>
+          <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 14, color: COLORS.outline, textDecorationLine: 'underline' }}>Ir al feed</Text>
         </TouchableOpacity>
       </View>
     );
@@ -238,18 +234,18 @@ export default function VisitScreen() {
     }));
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
       {/* Absolute glassmorphism header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
-          <MaterialIcons name="arrow-back" size={24} color="#032417" />
+          <MaterialIcons name="arrow-back" size={24} color={COLORS.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Publicación</Text>
         <TouchableOpacity
           style={styles.headerBtn}
           onPress={isOwnPost ? () => router.push(`/edit-visit/${id}`) : handleShare}
         >
-          <MaterialIcons name={isOwnPost ? 'edit' : 'ios-share'} size={22} color="#032417" />
+          <MaterialIcons name={isOwnPost ? 'edit' : 'ios-share'} size={22} color={COLORS.primary} />
         </TouchableOpacity>
       </View>
 
@@ -318,7 +314,7 @@ export default function VisitScreen() {
           />
         ) : (
           // Fallback when no images at all
-          <View style={[styles.carouselFrame, { backgroundColor: '#1a3a2b', justifyContent: 'flex-end', padding: 32 }]}>
+          <View style={[styles.carouselFrame, { backgroundColor: COLORS.primaryContainer, justifyContent: 'flex-end', padding: 32 }]}>
             <Text style={styles.frameTitleLarge}>{resolvedRestaurantName}</Text>
           </View>
         )}
@@ -363,8 +359,8 @@ export default function VisitScreen() {
             {(visit as any)?.user?.avatar_url ? (
               <ExpoImage source={{ uri: (visit as any).user.avatar_url }} style={styles.userAvatar} contentFit="cover" cachePolicy="memory-disk" transition={150} />
             ) : (
-              <View style={[styles.userAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-                <MaterialIcons name="person" size={22} color="#727973" />
+              <View style={[styles.userAvatar, { backgroundColor: COLORS.surfaceContainerHighest, alignItems: 'center', justifyContent: 'center' }]}>
+                <MaterialIcons name="person" size={22} color={COLORS.outline} />
               </View>
             )}
             <View style={{ flex: 1 }}>
@@ -395,7 +391,7 @@ export default function VisitScreen() {
             activeOpacity={0.7}
             onPress={() => router.push(`/restaurant/${(visit as any)?.restaurant?.id}`)}
           >
-            <MaterialIcons name="restaurant" size={16} color="#032417" />
+            <MaterialIcons name="restaurant" size={16} color={COLORS.primary} />
             <View style={{ flex: 1 }}>
               <Text style={styles.restaurantLinkText}>{resolvedRestaurantName}</Text>
               {(() => {
@@ -409,7 +405,7 @@ export default function VisitScreen() {
                 ) : null;
               })()}
             </View>
-            <MaterialIcons name="chevron-right" size={18} color="#727973" />
+            <MaterialIcons name="chevron-right" size={18} color={COLORS.outline} />
           </TouchableOpacity>
 
           {/* Quote */}
@@ -431,7 +427,7 @@ export default function VisitScreen() {
                 <View key={i} style={styles.dishItem}>
                   {dish.highlighted
                     ? <Text style={styles.dishStar}>★</Text>
-                    : <View style={styles.dishIconWrap}><MaterialIcons name="restaurant" size={11} color="#c1c8c2" /></View>
+                    : <View style={styles.dishIconWrap}><MaterialIcons name="restaurant" size={11} color={COLORS.outlineVariant} /></View>
                   }
                   <Text style={[styles.dishName, dish.highlighted && styles.dishNameHighlighted]}>
                     {dish.name}
@@ -454,7 +450,7 @@ export default function VisitScreen() {
               <MaterialIcons
                 name={postSaved ? 'bookmark' : 'bookmark-border'}
                 size={20}
-                color={postSaved ? '#546b00' : '#032417'}
+                color={postSaved ? COLORS.onSecondaryContainer : COLORS.primary}
               />
               <Text style={[styles.actionBtnPrimaryText, postSaved && styles.actionBtnPrimaryTextActive]}>
                 {postSaved ? 'Post guardado' : 'Guardar post'}
@@ -469,7 +465,7 @@ export default function VisitScreen() {
               <MaterialIcons
                 name={restaurantSaved ? 'star' : 'star-border'}
                 size={20}
-                color={restaurantSaved ? '#546b00' : '#032417'}
+                color={restaurantSaved ? COLORS.onSecondaryContainer : COLORS.primary}
               />
               <Text style={[styles.actionBtnPrimaryText, restaurantSaved && styles.actionBtnPrimaryTextActive]}>
                 {restaurantSaved ? 'En mi lista' : 'Guardar lugar'}
@@ -484,7 +480,7 @@ export default function VisitScreen() {
               activeOpacity={0.8}
               onPress={() => router.push(`/edit-visit/${id}`)}
             >
-              <MaterialIcons name="edit" size={18} color="#032417" />
+              <MaterialIcons name="edit" size={18} color={COLORS.primary} />
               <Text style={styles.actionBtnEditText}>Editar publicación</Text>
             </TouchableOpacity>
           )}
@@ -497,7 +493,7 @@ export default function VisitScreen() {
               onPress={handleDelete}
               disabled={isDeleting}
             >
-              <MaterialIcons name="delete-outline" size={16} color="#ba1a1a" />
+              <MaterialIcons name="delete-outline" size={16} color={COLORS.error} />
               <Text style={styles.actionBtnDeleteText}>
                 {isDeleting ? 'Eliminando…' : 'Eliminar publicación'}
               </Text>
@@ -505,110 +501,6 @@ export default function VisitScreen() {
           )}
         </View>
 
-        {/* Comments Section */}
-        <View style={{
-          marginTop: 24,
-          paddingHorizontal: 20,
-          paddingBottom: 24,
-          gap: 16,
-        }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={{ width: 3, height: 14, backgroundColor: '#c7ef48', borderRadius: 2 }} />
-            <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 10, color: '#727973', textTransform: 'uppercase', letterSpacing: 3 }}>
-              COMENTARIOS {comments?.length ? `(${comments.length})` : ''}
-            </Text>
-          </View>
-
-          {/* Comment input */}
-          {currentUser?.id && (
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              backgroundColor: '#f7f3ec',
-              borderRadius: 16,
-              paddingHorizontal: 14,
-              paddingVertical: 10,
-            }}>
-              <TextInput
-                style={{
-                  flex: 1,
-                  fontFamily: 'Manrope-Regular',
-                  fontSize: 14,
-                  color: '#1c1c18',
-                  maxHeight: 80,
-                }}
-                placeholder="Escribe un comentario..."
-                placeholderTextColor="#c1c8c2"
-                value={commentText}
-                onChangeText={setCommentText}
-                multiline
-              />
-              <TouchableOpacity
-                onPress={async () => {
-                  if (!commentText.trim() || !currentUser?.id) return;
-                  await postComment({ userId: currentUser.id, text: commentText.trim() });
-                  setCommentText('');
-                }}
-                disabled={commentPosting || !commentText.trim()}
-                activeOpacity={0.7}
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: commentText.trim() ? '#032417' : '#e6e2db',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                {commentPosting ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <MaterialIcons name="send" size={16} color={commentText.trim() ? '#ffffff' : '#a0a6a1'} />
-                )}
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Comments list */}
-          {(comments ?? []).map((c: any) => (
-            <View key={c.id} style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
-              <TouchableOpacity onPress={() => router.push(`/profile/${c.user.id}`)}>
-                {c.user.avatar_url ? (
-                  <ExpoImage source={{ uri: c.user.avatar_url }} style={{ width: 32, height: 32, borderRadius: 16 }} contentFit="cover" cachePolicy="memory-disk" />
-                ) : (
-                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }}>
-                    <MaterialIcons name="person" size={16} color="#727973" />
-                  </View>
-                )}
-              </TouchableOpacity>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 13, color: '#032417' }}>
-                  {c.user.name}
-                  <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#424844' }}>
-                    {'  '}{c.text}
-                  </Text>
-                </Text>
-                <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 11, color: '#c1c8c2', marginTop: 3 }}>
-                  {(() => {
-                    const diff = Date.now() - new Date(c.created_at).getTime();
-                    const mins = Math.floor(diff / 60000);
-                    if (mins < 60) return `hace ${mins}m`;
-                    const hrs = Math.floor(mins / 60);
-                    if (hrs < 24) return `hace ${hrs}h`;
-                    return `hace ${Math.floor(hrs / 24)}d`;
-                  })()}
-                </Text>
-              </View>
-            </View>
-          ))}
-
-          {(!comments || comments.length === 0) && (
-            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#c1c8c2', textAlign: 'center', paddingVertical: 8 }}>
-              Sé el primero en comentar
-            </Text>
-          )}
-        </View>
 
         <View style={{ height: 48 }} />
       </View>
@@ -634,11 +526,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(193,200,194,0.15)',
   },
-  headerBtn: { padding: 8 },
+  headerBtn: { padding: 10, minWidth: 44, minHeight: 44, alignItems: 'center' as const, justifyContent: 'center' as const },
   headerTitle: {
     fontFamily: 'Manrope-Bold',
     fontSize: 18,
-    color: '#032417',
+    color: COLORS.primary,
     flex: 1,
     textAlign: 'center',
   },
@@ -670,7 +562,7 @@ const styles = StyleSheet.create({
   frameTitleLarge: {
     fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 36,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
     lineHeight: 42,
   },
   frameSubtitleUppercase: {
@@ -682,7 +574,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   frameBadge: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
@@ -691,14 +583,14 @@ const styles = StyleSheet.create({
   frameBadgeText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
   frameTitleMedium: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 30,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
     lineHeight: 36,
   },
   counter: {
@@ -715,7 +607,7 @@ const styles = StyleSheet.create({
   counterText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 10,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
     letterSpacing: 2,
   },
   progressBars: {
@@ -733,7 +625,7 @@ const styles = StyleSheet.create({
   },
   progressBarActive: {
     width: 24,
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.onPrimary,
   },
   progressBarInactive: {
     width: 6,
@@ -766,17 +658,17 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     borderWidth: 2,
-    borderColor: '#c7ef48',
+    borderColor: COLORS.secondaryContainer,
   },
   userName: {
     fontFamily: 'Manrope-Bold',
     fontSize: 15,
-    color: '#032417',
+    color: COLORS.primary,
   },
   publishedAt: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 10,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginTop: 2,
@@ -803,7 +695,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
@@ -812,12 +704,12 @@ const styles = StyleSheet.create({
   restaurantLinkText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
-    color: '#032417',
+    color: COLORS.primary,
   },
   quoteText: {
     fontFamily: 'NotoSerif-Italic',
     fontSize: 17,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
     lineHeight: 26,
   },
   comandaSection: {
@@ -839,7 +731,7 @@ const styles = StyleSheet.create({
   comandaLabel: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
     letterSpacing: 3,
     textTransform: 'uppercase',
   },
@@ -858,7 +750,7 @@ const styles = StyleSheet.create({
   dishStar: {
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
-    color: '#516600',
+    color: COLORS.secondary,
     width: 18,
     textAlign: 'center',
   },
@@ -869,11 +761,11 @@ const styles = StyleSheet.create({
   dishName: {
     fontFamily: 'NotoSerif-Regular',
     fontSize: 15,
-    color: '#1c1c18',
+    color: COLORS.onSurface,
     flex: 1,
   },
   dishNameHighlighted: {
-    color: '#032417',
+    color: COLORS.primary,
     fontFamily: 'NotoSerif-Bold',
   },
   actionsContainer: {
@@ -894,18 +786,18 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 12,
     borderRadius: 18,
-    backgroundColor: '#f1ede6',
+    backgroundColor: COLORS.surfaceContainer,
   },
   actionBtnPrimaryActive: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
   },
   actionBtnPrimaryText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#032417',
+    color: COLORS.primary,
   },
   actionBtnPrimaryTextActive: {
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   actionBtnEdit: {
     flexDirection: 'row',
@@ -915,24 +807,24 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     paddingHorizontal: 20,
     borderRadius: 18,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
   },
   actionBtnEditText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
-    color: '#032417',
+    color: COLORS.primary,
   },
   actionBtnDelete: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 10,
+    paddingVertical: 14,
   },
   actionBtnDeleteText: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 13,
-    color: '#ba1a1a',
+    color: COLORS.error,
   },
   // legacy aliases (unused but kept for safety)
   actionBtn: {
@@ -944,11 +836,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 16,
-    backgroundColor: '#f1ede6',
+    backgroundColor: COLORS.surfaceContainer,
   },
-  actionBtnActive: { backgroundColor: '#c7ef48' },
-  actionBtnStar: { backgroundColor: '#c7ef48' },
-  actionBtnTextStar: { color: '#546b00' },
-  actionBtnText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#032417' },
-  actionBtnTextActive: { color: '#546b00' },
+  actionBtnActive: { backgroundColor: COLORS.secondaryContainer },
+  actionBtnStar: { backgroundColor: COLORS.secondaryContainer },
+  actionBtnTextStar: { color: COLORS.onSecondaryContainer },
+  actionBtnText: { fontFamily: 'Manrope-Bold', fontSize: 13, color: COLORS.primary },
+  actionBtnTextActive: { color: COLORS.onSecondaryContainer },
 });

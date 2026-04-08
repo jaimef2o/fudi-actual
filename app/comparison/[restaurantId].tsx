@@ -10,7 +10,9 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState, useRef, useEffect, useMemo } from 'react';
+import * as Haptics from 'expo-haptics';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { showAlert } from '../../lib/utils/alerts';
 import { useAppStore } from '../../store';
 import { useUserRanking, useUpdateVisitRank } from '../../lib/hooks/useVisit';
 import { recomputeRankPositions, SCORE_BRACKETS } from '../../lib/api/visits';
@@ -82,6 +84,7 @@ export default function ComparisonScreen() {
   const [initialized, setInitialized] = useState(false);
   const [history, setHistory] = useState<Array<{ lo: number; hi: number }>>([]);
 
+  const [comparisonCount, setComparisonCount] = useState(0);
   const [done, setDone] = useState(false);
   const [finalPosition, setFinalPosition] = useState(1);
   const [finalScore, setFinalScore] = useState(0);
@@ -89,6 +92,8 @@ export default function ComparisonScreen() {
 
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const finishedRef = useRef(false);
+  const lastChoiceTime = useRef(0);
+  const [throttled, setThrottled] = useState(false);
 
   // Derived: current pivot to compare against
   const mid = Math.floor((lo + hi) / 2);
@@ -124,33 +129,48 @@ export default function ComparisonScreen() {
   async function finishComparison(insertIdx: number) {
     if (finishedRef.current) return;
     finishedRef.current = true;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 
     // Score for this position within the bracket
     const totalInBracket = bracketList.length + 1;
     const score = calcBracketScore(sentiment, insertIdx, totalInBracket);
 
-    setSaving(true);
-    try {
-      // 1. Set preliminary rank on new visit (position within bracket, not global yet)
-      await updateRank({ visitId: visitId!, rankPosition: insertIdx + 1, rankScore: score });
-      // 2. Recompute ALL scores + global positions so the whole ranking is consistent
-      await recomputeRankPositions(currentUser!.id);
-    } catch (e) {
-      console.error('Error saving rank:', e);
-    } finally {
-      setSaving(false);
-    }
-
     setFinalScore(score);
     setFinalPosition(insertIdx + 1);
-    queryClient.invalidateQueries({ queryKey: ['feed'] });
-    queryClient.invalidateQueries({ queryKey: ['ranking', currentUser?.id] });
+
+    // Optimistic: show result immediately, save in background
     showToast(`¡${newRestaurantName} — ${score.toFixed(1)} puntos!`);
     animateTransition(() => setDone(true));
+
+    // Background save — non-blocking
+    setSaving(true);
+    (async () => {
+      try {
+        await updateRank({ visitId: visitId!, rankPosition: insertIdx + 1, rankScore: score });
+        await recomputeRankPositions(currentUser!.id);
+      } catch (e) {
+        if (__DEV__) console.error('Error saving rank:', e);
+        showToast('Error al guardar — reintenta');
+      } finally {
+        setSaving(false);
+        queryClient.invalidateQueries({ queryKey: ['feed'] });
+        queryClient.invalidateQueries({ queryKey: ['ranking', currentUser?.id] });
+      }
+    })();
   }
 
   // ── Choice handler ──────────────────────────────────────────────────────────
   function handleChoose(winner: 'new' | 'existing') {
+    const now = Date.now();
+    const elapsed = now - lastChoiceTime.current;
+    if (elapsed < 600) {
+      // Too fast — briefly show throttle hint then proceed
+      setThrottled(true);
+      setTimeout(() => setThrottled(false), 800);
+    }
+    lastChoiceTime.current = now;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setComparisonCount((c) => c + 1);
     const nextLo = winner === 'existing' ? mid + 1 : lo;
     const nextHi = winner === 'new' ? mid : hi;
 
@@ -168,6 +188,7 @@ export default function ComparisonScreen() {
 
   function handleUndo() {
     if (history.length === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     const prev = history[history.length - 1];
     animateTransition(() => {
       setLo(prev.lo);
@@ -183,8 +204,9 @@ export default function ComparisonScreen() {
   }
 
   // ── Progress ────────────────────────────────────────────────────────────────
+  const totalExpected = Math.max(1, Math.ceil(Math.log2(bracketList.length)));
   const progressPct = initialized && bracketList.length > 0
-    ? (bracketList.length - (hi - lo)) / bracketList.length
+    ? Math.min(comparisonCount / totalExpected, 1)
     : 0;
 
   // ── Done state ──────────────────────────────────────────────────────────────
@@ -218,7 +240,7 @@ export default function ComparisonScreen() {
                 router.navigate('/ranking');
               }}
             >
-              <Text style={styles.successBtnText}>Ver mi ranking →</Text>
+              <Text style={styles.successBtnText}>Ver mi historial →</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.successSecondaryBtn}
@@ -253,7 +275,21 @@ export default function ComparisonScreen() {
     <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+        <TouchableOpacity
+          onPress={() => {
+            const inProgress = !done && history.length > 0;
+            if (!inProgress) { router.back(); return; }
+            showAlert(
+              '¿Salir del ranking?',
+              'Perderás el progreso de esta comparación.',
+              [
+                { text: 'Continuar', style: 'cancel' },
+                { text: 'Salir', style: 'destructive', onPress: () => router.back() },
+              ]
+            );
+          }}
+          style={styles.headerBtn}
+        >
           <MaterialIcons name="close" size={24} color="#032417" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Ubicar en ranking</Text>
@@ -266,6 +302,15 @@ export default function ComparisonScreen() {
       <View style={styles.progressBar}>
         <View style={[styles.progressFill, { width: `${Math.min(progressPct * 100, 95)}%` }]} />
       </View>
+
+      {/* Throttle hint — shown briefly when user taps too fast */}
+      {throttled && (
+        <View style={{ alignItems: 'center', paddingVertical: 4 }}>
+          <Text style={{ fontFamily: 'Manrope-Medium', fontSize: 11, color: '#727973' }}>
+            Tómate tu tiempo — tu ranking depende de esto
+          </Text>
+        </View>
+      )}
 
       <Animated.View style={[{ flex: 1 }, { opacity: fadeAnim }]}>
         {/* Title */}

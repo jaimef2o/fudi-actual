@@ -19,7 +19,8 @@ create table if not exists public.users (
   cuisine_dislikes     text[],
   dietary_restrictions text[],
   push_token           text,
-  is_creator           boolean not null default false,
+  is_public            boolean not null default true,
+  phone_hash           text,
   taste_profile        text,
   created_at           timestamptz not null default now()
 );
@@ -31,14 +32,17 @@ create table if not exists public.relationships (
   user_id       uuid not null references public.users(id) on delete cascade,
   target_id     uuid not null references public.users(id) on delete cascade,
   type          text not null check (type in ('mutual','following')),
+  status        text not null default 'active' check (status in ('active','pending')),
   affinity_score numeric(4,1),
   created_at    timestamptz not null default now(),
   primary key (user_id, target_id)
 );
 
 create table if not exists public.chains (
-  id   uuid primary key default uuid_generate_v4(),
-  name text not null unique
+  id       uuid primary key default uuid_generate_v4(),
+  chain_id text unique,       -- slug identifier (e.g. 'lamonarracha', 'goiko')
+  name     text not null,     -- display name (e.g. 'Lamonarracha', 'Goiko')
+  pattern  text               -- regex for matching restaurant names (case-insensitive)
 );
 
 create table if not exists public.restaurants (
@@ -67,7 +71,7 @@ create table if not exists public.visits (
   rank_position  int,
   rank_score     numeric(3,1),
   note           text,
-  visibility     text not null default 'friends' check (visibility in ('friends','groups','private')),
+  visibility     text not null default 'friends' check (visibility in ('public','friends','groups','private')),
   source_visit_id uuid references public.visits(id),
   spend_per_person text,
   created_at     timestamptz not null default now()
@@ -308,6 +312,10 @@ create index if not exists idx_list_items_restaurant_id on public.list_items(res
 create index if not exists idx_reactions_visit_id on public.reactions(visit_id);
 create index if not exists idx_reactions_user_id on public.reactions(user_id);
 create index if not exists idx_relationships_target_id on public.relationships(target_id);
+create index if not exists idx_users_phone_hash on public.users(phone_hash) where phone_hash is not null;
+create index if not exists idx_rel_follower_active on public.relationships(user_id) where status = 'active';
+create index if not exists idx_rel_followed_active on public.relationships(target_id) where status = 'active';
+create index if not exists idx_rel_pending on public.relationships(target_id) where status = 'pending';
 create index if not exists idx_saved_visits_user_id on public.saved_visits(user_id);
 create index if not exists idx_invitations_token on public.invitations(token);
 create index if not exists idx_restaurants_chain_name on public.restaurants(chain_name);

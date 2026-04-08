@@ -16,60 +16,24 @@ export type Database = {
     Tables: {
       chains: {
         Row: {
-          created_at: string | null
           id: string
+          chain_id: string | null
           name: string
+          pattern: string | null
         }
         Insert: {
-          created_at?: string | null
           id?: string
+          chain_id?: string | null
           name: string
+          pattern?: string | null
         }
         Update: {
-          created_at?: string | null
           id?: string
+          chain_id?: string | null
           name?: string
+          pattern?: string | null
         }
         Relationships: []
-      }
-      dishes: {
-        Row: {
-          created_at: string | null
-          created_by: string | null
-          id: string
-          name: string
-          restaurant_id: string
-        }
-        Insert: {
-          created_at?: string | null
-          created_by?: string | null
-          id?: string
-          name: string
-          restaurant_id: string
-        }
-        Update: {
-          created_at?: string | null
-          created_by?: string | null
-          id?: string
-          name?: string
-          restaurant_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "dishes_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "dishes_restaurant_id_fkey"
-            columns: ["restaurant_id"]
-            isOneToOne: false
-            referencedRelation: "restaurants"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       invitations: {
         Row: {
@@ -220,10 +184,86 @@ export type Database = {
           },
         ]
       }
+      saved_visits: {
+        Row: {
+          id: string
+          user_id: string
+          visit_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          visit_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          visit_id?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "saved_visits_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "saved_visits_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      visit_comments: {
+        Row: {
+          id: string
+          visit_id: string
+          user_id: string
+          text: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          visit_id: string
+          user_id: string
+          text: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          visit_id?: string
+          user_id?: string
+          text?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visit_comments_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visit_comments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       relationships: {
         Row: {
           affinity_score: number | null
           created_at: string
+          status: string
           target_id: string
           type: string
           user_id: string
@@ -231,6 +271,7 @@ export type Database = {
         Insert: {
           affinity_score?: number | null
           created_at?: string
+          status?: string
           target_id: string
           type: string
           user_id: string
@@ -238,6 +279,7 @@ export type Database = {
         Update: {
           affinity_score?: number | null
           created_at?: string
+          status?: string
           target_id?: string
           type?: string
           user_id?: string
@@ -263,7 +305,6 @@ export type Database = {
         Row: {
           address: string | null
           brand_name: string | null
-          brand_slug: string | null
           chain_id: string | null
           chain_name: string | null
           city: string | null
@@ -280,7 +321,6 @@ export type Database = {
         Insert: {
           address?: string | null
           brand_name?: string | null
-          brand_slug?: string | null
           chain_id?: string | null
           chain_name?: string | null
           city?: string | null
@@ -297,7 +337,6 @@ export type Database = {
         Update: {
           address?: string | null
           brand_name?: string | null
-          brand_slug?: string | null
           chain_id?: string | null
           chain_name?: string | null
           city?: string | null
@@ -331,9 +370,10 @@ export type Database = {
           dietary_restrictions: string[] | null
           handle: string | null
           id: string
-          is_creator: boolean
+          is_public: boolean
           name: string
           phone: string | null
+          phone_hash: string | null
           push_token: string | null
           taste_profile: string | null
         }
@@ -346,9 +386,10 @@ export type Database = {
           dietary_restrictions?: string[] | null
           handle?: string | null
           id: string
-          is_creator?: boolean
+          is_public?: boolean
           name?: string
           phone?: string | null
+          phone_hash?: string | null
           push_token?: string | null
           taste_profile?: string | null
         }
@@ -361,9 +402,10 @@ export type Database = {
           dietary_restrictions?: string[] | null
           handle?: string | null
           id?: string
-          is_creator?: boolean
+          is_public?: boolean
           name?: string
           phone?: string | null
+          phone_hash?: string | null
           push_token?: string | null
           taste_profile?: string | null
         }
@@ -699,5 +741,11 @@ export type RestaurantRow = Database['public']['Tables']['restaurants']['Row'];
 export type RestaurantInsert = Database['public']['Tables']['restaurants']['Insert'];
 export type VisitRow = Database['public']['Tables']['visits']['Row'];
 export type VisitInsert = Database['public']['Tables']['visits']['Insert'];
+export type VisitDishRow = Database['public']['Tables']['visit_dishes']['Row'];
+export type VisitPhotoRow = Database['public']['Tables']['visit_photos']['Row'];
 export type ReactionRow = Database['public']['Tables']['reactions']['Row'];
 export type RelationshipRow = Database['public']['Tables']['relationships']['Row'];
+export type SavedVisitRow = Database['public']['Tables']['saved_visits']['Row'];
+export type SavedVisitInsert = Database['public']['Tables']['saved_visits']['Insert'];
+export type VisitCommentRow = Database['public']['Tables']['visit_comments']['Row'];
+export type VisitCommentInsert = Database['public']['Tables']['visit_comments']['Insert'];

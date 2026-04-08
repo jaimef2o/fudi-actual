@@ -23,6 +23,16 @@ export function getDisplayName(
   },
   context: DisplayContext = 'post'
 ): string {
+  // For 'post' and 'detail': show full location name (e.g. "Grosso Napoletano Malasaña")
+  // For 'ranking' and 'search': show brand name only (e.g. "Grosso Napoletano")
+  const useFullName = context === 'post' || context === 'detail';
+
+  if (useFullName) {
+    // In post/detail, always return the Google Places name as-is
+    return restaurant.name;
+  }
+
+  // ranking/search: resolve to canonical brand name
   // 1. Try chain_name column (pre-resolved)
   if (restaurant.chain_name) {
     const brandName = getChainName(restaurant.chain_name);

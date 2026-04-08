@@ -43,7 +43,7 @@ export default function EditVisitScreen() {
   const [sentiment, setSentiment] = useState<'loved' | 'fine' | 'disliked'>('loved');
   const [note, setNote] = useState('');
   const [spendPerPerson, setSpendPerPerson] = useState<'0-20' | '20-35' | '35-60' | '60+' | null>(null);
-  const [visibility, setVisibility] = useState<'friends' | 'groups' | 'private'>('friends');
+  const [visibility, setVisibility] = useState<'public' | 'friends' | 'groups' | 'private'>('friends');
   const [dishes, setDishes] = useState<EditDish[]>([]);
   const [dishInput, setDishInput] = useState('');
   const dishInputRef = useRef<any>(null);
@@ -449,6 +449,7 @@ export default function EditVisitScreen() {
           <Text style={s.sectionLabel}>VISIBILIDAD</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {([
+              { key: 'public' as const, label: 'Público', icon: 'public' as const },
               { key: 'friends' as const, label: 'Amigos', icon: 'group' as const },
               { key: 'private' as const, label: 'Solo yo', icon: 'lock' as const },
             ]).map((v) => {

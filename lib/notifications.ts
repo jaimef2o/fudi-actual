@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Push notification helpers for fudi.
  *
@@ -19,8 +18,8 @@ let Device: typeof import('expo-device') | null = null;
 try {
   Notifications = require('expo-notifications');
   Device = require('expo-device');
-} catch {
-  // expo-notifications / expo-device not installed yet
+} catch (err) {
+  if (__DEV__) console.warn('[savry] expo-notifications/expo-device not available:', err);
 }
 
 /**
@@ -38,7 +37,7 @@ export async function registerForPushNotifications(userId: string): Promise<void
   // Android requires a notification channel
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
-      name: 'fudi',
+      name: 'savry',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#c7ef48',
@@ -67,7 +66,7 @@ export async function registerForPushNotifications(userId: string): Promise<void
       .eq('id', userId);
   } catch (e) {
     // Token fetch failed — non-fatal
-    console.warn('[fudi notifications] Failed to get push token:', e);
+    if (__DEV__) console.warn('[savry] Failed to get push token:', e);
   }
 }
 
@@ -80,6 +79,8 @@ export function configureForegroundNotifications(): void {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
       shouldPlaySound: true,
       shouldSetBadge: false,
     }),

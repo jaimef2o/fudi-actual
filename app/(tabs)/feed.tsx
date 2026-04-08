@@ -2,38 +2,29 @@ import {
   View,
   Text,
   ScrollView,
-  FlatList,
-  Image,
   TouchableOpacity,
   StyleSheet,
-  Dimensions,
   Platform,
   RefreshControl,
   ActivityIndicator,
   Modal,
-  Animated,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { router, useFocusEffect } from 'expo-router';
 import { registerForPushNotifications, configureForegroundNotifications } from '../../lib/notifications';
 import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { showAlert } from '../../lib/utils/alerts';
 import * as Haptics from 'expo-haptics';
 import { useAppStore } from '../../store';
-import { useFeed, useUserFeed } from '../../lib/hooks/useFeed';
-import { useSavePost, useToggleReaction } from '../../lib/hooks/useVisit';
-import { useFollowRequests, useFollowUser, useRejectFollowRequest } from '../../lib/hooks/useProfile';
-import type { FeedPost } from '../../lib/api/feed';
-import { scorePalette } from '../../lib/sentimentColors';
+import { COLORS } from '../../lib/theme/colors';
+import { useFeed, useUserFeed, useForYouFeed } from '../../lib/hooks/useFeed';
+import { useFollowRequests, useNewFollowers, useFollowUser, useRejectFollowRequest } from '../../lib/hooks/useProfile';
 import { supabase } from '../../lib/supabase';
-import { getDisplayName } from '../../lib/utils/restaurantName';
 import { useShimmer, FeedCardSkeleton } from '../../components/SkeletonLoader';
-import { AnimatedCard } from '../../components/AnimatedCard';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { FeedCard } from '../../components/cards/FeedCard';
+import UserCard from '../../components/cards/UserCard';
 
 // ─── Feed skeleton list (shown while loading) ─────────────────────────────────
 
@@ -55,11 +46,13 @@ function NotifPanel({
   onClose,
   currentUserId,
   requests,
+  newFollowers,
 }: {
   visible: boolean;
   onClose: () => void;
   currentUserId: string;
   requests: any[];
+  newFollowers: any[];
 }) {
   const { mutateAsync: follow } = useFollowUser(currentUserId);
   const { mutateAsync: reject } = useRejectFollowRequest(currentUserId);
@@ -77,6 +70,14 @@ function NotifPanel({
     finally { setBusyId(null); }
   }
 
+  async function handleFollowBack(userId: string) {
+    setBusyId(userId);
+    try { await follow(userId); } catch { /* silent */ }
+    finally { setBusyId(null); }
+  }
+
+  const totalCount = requests.length + newFollowers.length;
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       {/* Backdrop */}
@@ -90,82 +91,59 @@ function NotifPanel({
         {/* Header row */}
         <View style={notifStyles.panelHeader}>
           <Text style={notifStyles.panelTitle}>Notificaciones</Text>
-          {requests.length > 0 && (
+          {totalCount > 0 && (
             <View style={notifStyles.panelBadge}>
-              <Text style={notifStyles.panelBadgeText}>{requests.length}</Text>
+              <Text style={notifStyles.panelBadgeText}>{totalCount}</Text>
             </View>
           )}
         </View>
 
-        {requests.length === 0 ? (
+        {totalCount === 0 ? (
           <View style={notifStyles.emptyWrap}>
-            <MaterialIcons name="notifications-none" size={32} color="#c1c8c2" />
+            <MaterialIcons name="notifications-none" size={32} color={COLORS.outlineVariant} />
             <Text style={notifStyles.emptyText}>Sin notificaciones</Text>
           </View>
         ) : (
-          <>
-            <Text style={notifStyles.sectionLabel}>SOLICITUDES DE AMISTAD</Text>
-            {requests.map((req: any) => {
-              const busy = busyId === req.id;
-              return (
-                <View key={req.id} style={notifStyles.row}>
-                  {/* Avatar */}
-                  <TouchableOpacity
-                    onPress={() => { onClose(); router.push(`/profile/${req.id}`); }}
-                    activeOpacity={0.8}
-                  >
-                    {req.avatar_url ? (
-                      <ExpoImage source={{ uri: req.avatar_url }} style={notifStyles.avatar} contentFit="cover" cachePolicy="memory-disk" />
-                    ) : (
-                      <View style={[notifStyles.avatar, notifStyles.avatarPlaceholder]}>
-                        <MaterialIcons name="person" size={18} color="#727973" />
-                      </View>
-                    )}
-                  </TouchableOpacity>
+          <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+            {/* Pending follow requests (private users) */}
+            {requests.length > 0 && (
+              <>
+                <Text style={notifStyles.sectionLabel}>SOLICITUDES DE AMISTAD</Text>
+                {requests.map((req: any) => (
+                  <UserCard
+                    key={req.id}
+                    user={{ id: req.id, name: req.name, handle: req.handle, avatar_url: req.avatar_url }}
+                    variant="follow-request"
+                    compact
+                    subtitle={req.handle ? `@${req.handle}` : 'Quiere seguirte'}
+                    primaryLoading={busyId === req.id}
+                    secondaryLoading={busyId === req.id}
+                    onPrimaryAction={() => handleAccept(req.id)}
+                    onSecondaryAction={() => handleReject(req.id)}
+                    onNavigate={onClose}
+                  />
+                ))}
+              </>
+            )}
 
-                  {/* Name */}
-                  <TouchableOpacity
-                    style={{ flex: 1 }}
-                    onPress={() => { onClose(); router.push(`/profile/${req.id}`); }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={notifStyles.name} numberOfLines={1}>{req.name}</Text>
-                    <Text style={notifStyles.sub} numberOfLines={1}>
-                      {req.handle ? `@${req.handle}` : 'Quiere seguirte'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {/* Actions */}
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <TouchableOpacity
-                      style={notifStyles.rejectBtn}
-                      onPress={() => handleReject(req.id)}
-                      disabled={!!busyId}
-                      activeOpacity={0.8}
-                    >
-                      {busy ? (
-                        <ActivityIndicator size="small" color="#727973" />
-                      ) : (
-                        <MaterialIcons name="close" size={15} color="#727973" />
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={notifStyles.acceptBtn}
-                      onPress={() => handleAccept(req.id)}
-                      disabled={!!busyId}
-                      activeOpacity={0.8}
-                    >
-                      {busy ? (
-                        <ActivityIndicator size="small" color="#546b00" />
-                      ) : (
-                        <MaterialIcons name="check" size={15} color="#546b00" />
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })}
-          </>
+            {/* New followers (public users who followed you) */}
+            {newFollowers.length > 0 && (
+              <>
+                <Text style={notifStyles.sectionLabel}>NUEVOS SEGUIDORES</Text>
+                {newFollowers.map((follower: any) => (
+                  <UserCard
+                    key={follower.id}
+                    user={{ id: follower.id, name: follower.name, handle: follower.handle, avatar_url: follower.avatar_url }}
+                    variant="new-follower"
+                    compact
+                    primaryLoading={busyId === follower.id}
+                    onPrimaryAction={() => handleFollowBack(follower.id)}
+                    onNavigate={onClose}
+                  />
+                ))}
+              </>
+            )}
+          </ScrollView>
         )}
       </View>
     </Modal>
@@ -178,10 +156,10 @@ const notifStyles = StyleSheet.create({
     top: Platform.OS === 'ios' ? 100 : 80,
     right: 16,
     width: 300,
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 20,
     paddingVertical: 16,
-    shadowColor: '#1c1c18',
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.15,
     shadowRadius: 24,
@@ -198,10 +176,10 @@ const notifStyles = StyleSheet.create({
   panelTitle: {
     fontFamily: 'Manrope-Bold',
     fontSize: 15,
-    color: '#032417',
+    color: COLORS.primary,
   },
   panelBadge: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     borderRadius: 999,
     paddingHorizontal: 7,
     paddingVertical: 2,
@@ -211,12 +189,12 @@ const notifStyles = StyleSheet.create({
   panelBadgeText: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   sectionLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 9,
-    color: '#727973',
+    color: COLORS.outline,
     textTransform: 'uppercase',
     letterSpacing: 2,
     paddingHorizontal: 18,
@@ -231,100 +209,32 @@ const notifStyles = StyleSheet.create({
   emptyText: {
     fontFamily: 'Manrope-Regular',
     fontSize: 13,
-    color: '#727973',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  avatarPlaceholder: {
-    backgroundColor: '#e6e2db',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  name: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 13,
-    color: '#032417',
-  },
-  sub: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 11,
-    color: '#727973',
-    marginTop: 1,
-  },
-  rejectBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#f1ede6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  acceptBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#c7ef48',
-    alignItems: 'center',
-    justifyContent: 'center',
+    color: COLORS.outline,
   },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-function formatSpend(spend: string | null | undefined): string | null {
-  if (!spend) return null;
-  const map: Record<string, string> = { '0-20': '~€0–20pp', '20-35': '~€20–35pp', '35-60': '~€35–60pp', '60+': '~€60+pp' };
-  return map[spend] ?? null;
-}
-
-function ScoreBadge({ score }: { score: number }) {
-  const pal = useMemo(() => scorePalette(score), [score]);
-  const animVal = useRef(new Animated.Value(0)).current;
-  const [displayScore, setDisplayScore] = useState('0.0');
-
-  useEffect(() => {
-    animVal.setValue(0);
-    Animated.timing(animVal, {
-      toValue: score,
-      duration: 900,
-      delay: 120,
-      useNativeDriver: false,
-    }).start();
-    const id = animVal.addListener(({ value }) => {
-      setDisplayScore(value.toFixed(1));
-    });
-    return () => animVal.removeListener(id);
-  }, [score]);
-
-  return (
-    <View style={[styles.scoreBadge, { backgroundColor: pal.badgeBg }]}>
-      <Text style={[styles.scoreBadgeText, { color: pal.badgeText }]}>{displayScore}</Text>
-    </View>
-  );
-}
-
-
 export default function FeedScreen() {
   const currentUser = useAppStore((s) => s.currentUser);
-  const { data, isLoading, isFetching, fetchNextPage, hasNextPage, refetch, isError } = useFeed(currentUser?.id);
+  // Friends feed (chronological, mutuals only)
+  const friendsFeed = useFeed(currentUser?.id);
+  // "Para Ti" algorithmic feed (public posts ranked by relevance)
+  const forYouFeed = useForYouFeed(currentUser?.id);
   // Also load own posts — shown when friends feed is empty
   const { data: ownData } = useUserFeed(currentUser?.id);
   const { data: followRequests } = useFollowRequests(currentUser?.id);
-  const pendingRequestCount = followRequests?.length ?? 0;
+  const { data: newFollowersData } = useNewFollowers(currentUser?.id);
   const pendingRequestors = (followRequests ?? []).map((r: any) => r.requester).filter(Boolean);
-  // Todos / Solo amigos toggle (local filter — no extra API call)
+  const newFollowersList = (newFollowersData ?? []).map((r: any) => r.requester).filter(Boolean);
+  const totalNotifCount = pendingRequestors.length + newFollowersList.length;
+  // Tab toggle: "Para ti" (algorithmic) vs "Solo amigos" (friends chronological)
   const [onlyMutual, setOnlyMutual] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+
+  // Pick the active feed based on toggle
+  const activeFeed = onlyMutual ? friendsFeed : forYouFeed;
+  const { data, isLoading, isFetching, isFetchingNextPage, fetchNextPage, hasNextPage, refetch, isError } = activeFeed;
 
   function handleAvatarLongPress() {
     showAlert(
@@ -344,6 +254,7 @@ export default function FeedScreen() {
   }
 
   const allPosts = data?.pages.flatMap((p) => p) ?? [];
+  // Friends tab: show only mutual friends; Para Ti tab: show everything (already filtered by algorithm)
   const posts = onlyMutual ? allPosts.filter((p) => p.is_mutual) : allPosts;
   const ownPosts = ownData?.pages.flatMap((p) => p) ?? [];
 
@@ -384,7 +295,7 @@ export default function FeedScreen() {
   }, [posts.length, ownPosts.length, currentUser?.id]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
       {/* Fixed glassmorphism header */}
       <BlurView intensity={70} tint="systemChromeMaterialLight" style={styles.header}>
         <View style={styles.headerRow}>
@@ -402,36 +313,36 @@ export default function FeedScreen() {
                 cachePolicy="memory-disk"
               />
             ) : (
-              <View style={[styles.headerAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-                <MaterialIcons name="person" size={20} color="#727973" />
+              <View style={[styles.headerAvatar, { backgroundColor: COLORS.surfaceContainerHighest, alignItems: 'center', justifyContent: 'center' }]}>
+                <MaterialIcons name="person" size={20} color={COLORS.outline} />
               </View>
             )}
           </TouchableOpacity>
-          <Text style={styles.logoText}>fudi</Text>
+          <Text style={styles.logoText}>savry</Text>
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => setNotifOpen(true)}
+            onPress={() => router.push('/notifications')}
             style={{ position: 'relative', padding: 4 }}
-            accessibilityLabel={pendingRequestCount > 0 ? `${pendingRequestCount} notificaciones` : 'Notificaciones'}
+            accessibilityLabel={totalNotifCount > 0 ? `${totalNotifCount} notificaciones` : 'Notificaciones'}
           >
             <MaterialIcons
-              name={pendingRequestCount > 0 ? 'notifications' : 'notifications-none'}
+              name={totalNotifCount > 0 ? 'notifications' : 'notifications-none'}
               size={26}
-              color="#032417"
+              color={COLORS.primary}
             />
-            {pendingRequestCount > 0 && (
+            {totalNotifCount > 0 && (
               <View style={styles.notifBadge}>
                 <Text style={styles.notifBadgeText}>
-                  {pendingRequestCount > 9 ? '9+' : pendingRequestCount}
+                  {totalNotifCount > 9 ? '9+' : totalNotifCount}
                 </Text>
               </View>
             )}
           </TouchableOpacity>
         </View>
-        {/* Para ti / Amigos toggle — X/Twitter style */}
+        {/* Para ti / Solo amigos toggle — X/Twitter style */}
         <View style={styles.feedToggleRow}>
           <TouchableOpacity
-            onPress={() => setOnlyMutual(false)}
+            onPress={() => { setOnlyMutual(false); Haptics.selectionAsync().catch(() => {}); }}
             style={styles.feedToggleTab}
             activeOpacity={0.7}
           >
@@ -441,12 +352,12 @@ export default function FeedScreen() {
             {!onlyMutual && <View style={styles.feedToggleUnderline} />}
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => setOnlyMutual(true)}
+            onPress={() => { setOnlyMutual(true); Haptics.selectionAsync().catch(() => {}); }}
             style={styles.feedToggleTab}
             activeOpacity={0.7}
           >
             <Text style={[styles.feedToggleText, onlyMutual && styles.feedToggleTextActive]}>
-              Amigos
+              Solo amigos
             </Text>
             {onlyMutual && <View style={styles.feedToggleUnderline} />}
           </TouchableOpacity>
@@ -466,22 +377,22 @@ export default function FeedScreen() {
             top: 80,
             alignSelf: 'center',
             zIndex: 100,
-            backgroundColor: '#032417',
+            backgroundColor: COLORS.primary,
             paddingVertical: 10,
             paddingHorizontal: 20,
             borderRadius: 999,
             flexDirection: 'row',
             alignItems: 'center',
             gap: 6,
-            shadowColor: '#000',
+            shadowColor: COLORS.onSurface,
             shadowOpacity: 0.18,
             shadowOffset: { width: 0, height: 4 },
             shadowRadius: 12,
             elevation: 8,
           }}
         >
-          <MaterialIcons name="arrow-upward" size={14} color="#c7ef48" />
-          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 13, color: '#ffffff' }}>
+          <MaterialIcons name="arrow-upward" size={14} color={COLORS.secondaryContainer} />
+          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 13, color: COLORS.onPrimary }}>
             Nueva publicación
           </Text>
         </TouchableOpacity>
@@ -497,7 +408,7 @@ export default function FeedScreen() {
           <RefreshControl
             refreshing={isFetching && !isLoading}
             onRefresh={refetch}
-            tintColor="#032417"
+            tintColor={COLORS.primary}
           />
         }
         onScroll={({ nativeEvent }) => {
@@ -513,84 +424,170 @@ export default function FeedScreen() {
         {/* Error state */}
         {isError && posts.length === 0 && (
           <View style={{ paddingTop: 60, alignItems: 'center', gap: 12, paddingHorizontal: 32 }}>
-            <MaterialIcons name="wifi-off" size={48} color="#c1c8c2" />
-            <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417', textAlign: 'center' }}>
+            <MaterialIcons name="wifi-off" size={48} color={COLORS.outlineVariant} />
+            <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary, textAlign: 'center' }}>
               Sin conexión
             </Text>
-            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center' }}>
+            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: COLORS.outline, textAlign: 'center' }}>
               No se pudo cargar el feed. Comprueba tu conexión e inténtalo de nuevo.
             </Text>
             <TouchableOpacity
-              style={{ backgroundColor: '#032417', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999, marginTop: 4 }}
+              style={{ backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999, marginTop: 4 }}
               onPress={() => refetch()}
               activeOpacity={0.85}
             >
-              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>Reintentar</Text>
+              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.onPrimary }}>Reintentar</Text>
             </TouchableOpacity>
           </View>
         )}
 
         {/* Real friend posts */}
         {posts.length > 0 && posts.map((post) => (
-          <RealFeedCard key={post.id} post={post} currentUserId={currentUser?.id} />
+          <FeedCard key={post.id} post={post} currentUserId={currentUser?.id} />
         ))}
 
-        {/* Own posts when friends feed is empty but user has their own visits */}
-        {posts.length === 0 && !isLoading && ownPosts.length > 0 && (
+        {/* Own posts when friends feed is empty but user has their own visits (only in "Solo amigos" tab) */}
+        {onlyMutual && posts.length === 0 && !isLoading && ownPosts.length > 0 && (
           ownPosts.map((post) => (
-            <RealFeedCard key={post.id} post={post} currentUserId={currentUser?.id} showRelationLabel={false} />
+            <FeedCard key={post.id} post={post} currentUserId={currentUser?.id} showRelationLabel={false} />
           ))
         )}
 
-        {/* "Solo amigos" filter active but no mutual-friend posts */}
-        {onlyMutual && posts.length === 0 && allPosts.length > 0 && !isLoading && (
+        {/* "Para Ti" empty state — no public content yet */}
+        {!onlyMutual && posts.length === 0 && !isLoading && !isError && (
           <View style={{ paddingHorizontal: 24, paddingTop: 48, alignItems: 'center', gap: 12 }}>
-            <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: '#f1ede6', alignItems: 'center', justifyContent: 'center' }}>
-              <MaterialIcons name="people" size={32} color="#c7ef48" />
+            <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.surfaceContainer, alignItems: 'center', justifyContent: 'center' }}>
+              <MaterialIcons name="explore" size={32} color={COLORS.secondaryContainer} />
             </View>
-            <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417', textAlign: 'center' }}>
-              Sin posts de amigos mutuos
+            <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary, textAlign: 'center' }}>
+              Todavía no hay mucho por aquí...
             </Text>
-            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center', lineHeight: 20 }}>
-              Tus amigos mutuos no han publicado nada aún. Prueba con "Para ti".
+            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: COLORS.outline, textAlign: 'center', lineHeight: 20, maxWidth: 280 }}>
+              Cuando más gente comparta sus visitas, este feed se llenará de descubrimientos.
             </Text>
             <TouchableOpacity
-              style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 999, backgroundColor: '#f1ede6', marginTop: 4 }}
-              onPress={() => setOnlyMutual(false)}
-              activeOpacity={0.8}
+              style={{ paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999, backgroundColor: COLORS.primary, marginTop: 8 }}
+              onPress={() => router.push('/(tabs)/amigos')}
+              activeOpacity={0.85}
             >
-              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417' }}>Ver todos</Text>
+              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.onPrimary }}>Invitar amigos</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Empty state when no posts at all */}
-        {posts.length === 0 && ownPosts.length === 0 && !isLoading && !onlyMutual && (
-          <View style={{ paddingHorizontal: 24, paddingTop: 48, alignItems: 'center', gap: 16 }}>
-            <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#f1ede6', alignItems: 'center', justifyContent: 'center' }}>
-              <MaterialIcons name="restaurant" size={36} color="#c7ef48" />
+        {/* "Solo amigos" filter active but no mutual-friend posts (only when there ARE other posts to show) */}
+        {onlyMutual && posts.length === 0 && allPosts.length > 0 && ownPosts.length > 0 && !isLoading && (
+          <View style={{ paddingHorizontal: 24, paddingTop: 48, alignItems: 'center', gap: 12 }}>
+            <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.surfaceContainer, alignItems: 'center', justifyContent: 'center' }}>
+              <MaterialIcons name="people" size={32} color={COLORS.secondaryContainer} />
             </View>
-            <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 22, color: '#032417', textAlign: 'center' }}>
-              Tu feed está vacío
+            <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary, textAlign: 'center' }}>
+              Sin posts de amigos mutuos
             </Text>
-            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: '#727973', textAlign: 'center', lineHeight: 20 }}>
-              Registra tu primera visita o añade amigos para ver sus recomendaciones.
+            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 14, color: COLORS.outline, textAlign: 'center', lineHeight: 20 }}>
+              Tus amigos mutuos no han publicado nada aún. Prueba con "Para ti".
             </Text>
             <TouchableOpacity
-              style={{ backgroundColor: '#032417', paddingVertical: 14, paddingHorizontal: 28, borderRadius: 999, marginTop: 8 }}
+              style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 999, backgroundColor: COLORS.surfaceContainer, marginTop: 4 }}
+              onPress={() => setOnlyMutual(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.primary }}>Ver todos</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Empty state when no posts at all (new user) — shown only in "Solo amigos" tab */}
+        {onlyMutual && posts.length === 0 && ownPosts.length === 0 && !isLoading && (
+          <View style={emptyStyles.container}>
+            {/* Hero editorial — dark green card with logo */}
+            <View style={emptyStyles.heroCard}>
+              <Text style={emptyStyles.heroLogo}>savry</Text>
+              <Text style={emptyStyles.heroTagline}>TASTE · RANK · SHARE</Text>
+              <View style={emptyStyles.heroDivider} />
+              <Text style={emptyStyles.heroSubtitle}>
+                Tu diario gastronómico social. Descubre dónde comen tus amigos y construye tu ranking personal.
+              </Text>
+            </View>
+
+            {/* 3 pasos para empezar */}
+            <View style={emptyStyles.stepsCard}>
+              <Text style={emptyStyles.stepsTitle}>Empieza en 3 pasos</Text>
+
+              <View style={emptyStyles.stepRow}>
+                <View style={emptyStyles.stepBadge}>
+                  <Text style={emptyStyles.stepBadgeText}>1</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={emptyStyles.stepLabel}>Registra tu primera visita</Text>
+                  <Text style={emptyStyles.stepDesc}>Elige un restaurante, valóralo y añade los platos que pediste.</Text>
+                </View>
+                <MaterialIcons name="chevron-right" size={20} color={COLORS.outlineVariant} />
+              </View>
+
+              <View style={emptyStyles.stepDivider} />
+
+              <View style={emptyStyles.stepRow}>
+                <View style={emptyStyles.stepBadge}>
+                  <Text style={emptyStyles.stepBadgeText}>2</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={emptyStyles.stepLabel}>Añade amigos</Text>
+                  <Text style={emptyStyles.stepDesc}>Busca a tus amigos o invítalos. Verás sus visitas aquí.</Text>
+                </View>
+                <MaterialIcons name="chevron-right" size={20} color={COLORS.outlineVariant} />
+              </View>
+
+              <View style={emptyStyles.stepDivider} />
+
+              <View style={emptyStyles.stepRow}>
+                <View style={emptyStyles.stepBadge}>
+                  <Text style={emptyStyles.stepBadgeText}>3</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={emptyStyles.stepLabel}>Descubre restaurantes</Text>
+                  <Text style={emptyStyles.stepDesc}>Explora las recomendaciones de tu círculo y acierta siempre.</Text>
+                </View>
+                <MaterialIcons name="chevron-right" size={20} color={COLORS.outlineVariant} />
+              </View>
+            </View>
+
+            {/* CTAs */}
+            <TouchableOpacity
+              style={emptyStyles.ctaPrimary}
               onPress={() => router.push('/registrar-visita')}
               activeOpacity={0.85}
             >
-              <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 15, color: '#ffffff' }}>Registrar primera visita</Text>
+              <MaterialIcons name="add-circle-outline" size={20} color={COLORS.onPrimary} />
+              <Text style={emptyStyles.ctaPrimaryText}>Registrar primera visita</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
-              style={{ paddingVertical: 10 }}
+              style={emptyStyles.ctaSecondary}
               onPress={() => router.push('/(tabs)/amigos')}
+              activeOpacity={0.85}
+            >
+              <MaterialIcons name="people-outline" size={20} color={COLORS.primary} />
+              <Text style={emptyStyles.ctaSecondaryText}>Buscar amigos</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={emptyStyles.ctaTertiary}
+              onPress={() => router.push('/(tabs)/descubrir')}
               activeOpacity={0.7}
             >
-              <Text style={{ fontFamily: 'Manrope-SemiBold', fontSize: 14, color: '#032417', textDecorationLine: 'underline' }}>Añadir amigos</Text>
+              <Text style={emptyStyles.ctaTertiaryText}>Explorar restaurantes</Text>
+              <MaterialIcons name="arrow-forward" size={16} color={COLORS.outline} />
             </TouchableOpacity>
           </View>
+        )}
+        {isFetchingNextPage && (
+          <ActivityIndicator color={COLORS.primary} style={{ paddingVertical: 24 }} />
+        )}
+        {!hasNextPage && posts.length > 3 && (
+          <Text style={{ textAlign: 'center', color: COLORS.outlineVariant, paddingVertical: 24, fontFamily: 'Manrope-Regular', fontSize: 12 }}>
+            Has visto todas las publicaciones
+          </Text>
         )}
       </ScrollView>
 
@@ -601,394 +598,158 @@ export default function FeedScreen() {
           onClose={() => setNotifOpen(false)}
           currentUserId={currentUser.id}
           requests={pendingRequestors}
+          newFollowers={newFollowersList}
         />
       )}
     </View>
   );
 }
 
-function RelationLabel({ isMutual }: { isMutual: boolean }) {
-  return (
-    <View style={{
-      backgroundColor: isMutual ? 'rgba(199,239,72,0.40)' : '#ebe8e1',
-      borderRadius: 6,
-      paddingHorizontal: 7,
-      paddingVertical: 2,
-    }}>
-      <Text style={{
-        fontFamily: 'Manrope-SemiBold',
-        fontSize: 10,
-        color: isMutual ? '#546b00' : '#424844',
-      }}>
-        {isMutual ? 'Amigo' : 'Siguiendo'}
-      </Text>
-    </View>
-  );
-}
-
-const RealFeedCard = memo(function RealFeedCard({ post, currentUserId, showRelationLabel = true }: { post: FeedPost; currentUserId?: string; showRelationLabel?: boolean }) {
-  const showToast = useAppStore((s) => s.showToast);
-  const timeAgo = (dateStr: string) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `hace ${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `hace ${hrs}h`;
-    return `hace ${Math.floor(hrs / 24)}d`;
-  };
-
-  // ── Build ordered carousel frames: restaurant photos → dish photos ──────
-  type Frame = {
-    url: string;
-    kind: 'restaurant' | 'dish';
-    dishName?: string;
-    highlighted?: boolean;
-  };
-
-  const frames: Frame[] = useMemo(() => {
-    const restaurantPhotos = (post.photos ?? []).filter((p: any) => p.type === 'restaurant');
-    const dishPhotos = (post.photos ?? [])
-      .filter((p: any) => p.type === 'dish')
-      .map((p: any) => {
-        const dish = (post.dishes ?? []).find((d: any) => d.id === p.dish_id);
-        return {
-          url: p.photo_url as string,
-          kind: 'dish' as const,
-          dishName: dish?.name ?? '',
-          highlighted: dish?.highlighted ?? false,
-          position: dish?.position ?? 99,
-        };
-      })
-      .sort((a: any, b: any) => {
-        if (a.highlighted !== b.highlighted) return a.highlighted ? -1 : 1;
-        return a.position - b.position;
-      });
-
-    return [
-      ...(restaurantPhotos.length > 0
-        ? restaurantPhotos.map((p: any) => ({ url: p.photo_url, kind: 'restaurant' as const }))
-        : post.restaurant?.cover_image_url
-          ? [{ url: post.restaurant.cover_image_url, kind: 'restaurant' as const }]
-          : []),
-      ...dishPhotos,
-    ];
-  }, [post.photos, post.dishes, post.restaurant?.cover_image_url]);
-
-  const [imgIndex, setImgIndex] = useState(0);
-  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
-  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
-    if (viewableItems.length > 0 && viewableItems[0].index != null) {
-      setImgIndex(viewableItems[0].index);
-    }
-  }).current;
-  const [postSaved, setPostSaved] = useState(false);
-  const [likeActive, setLikeActive] = useState(false);
-  const [likeCount, setLikeCount] = useState(0);
-
-  // Initialize reaction state from real data
-  useEffect(() => {
-    const reactions = (post as any).reactions ?? [];
-    const hungryReactions = reactions.filter((r: any) => r.emoji === 'hungry');
-    setLikeCount(hungryReactions.length);
-    const userReacted = hungryReactions.some((r: any) => r.user_id === currentUserId);
-    setLikeActive(userReacted);
-  }, [post, currentUserId]);
-
-  const likeScale = useRef(new Animated.Value(1)).current;
-  const { mutateAsync: toggleSavePost } = useSavePost(currentUserId);
-  const { mutate: doToggleReaction } = useToggleReaction(post.id);
-
-  function handleLike() {
-    if (!currentUserId || currentUserId === post.user.id) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    const next = !likeActive;
-    setLikeActive(next);
-    setLikeCount((c) => next ? c + 1 : Math.max(0, c - 1));
-    Animated.sequence([
-      Animated.spring(likeScale, { toValue: 1.35, useNativeDriver: true, speed: 30, bounciness: 12 }),
-      Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 6 }),
-    ]).start();
-    doToggleReaction({ userId: currentUserId, emoji: 'hungry' });
-  }
-
-  async function handleBookmark() {
-    if (!currentUserId) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    const next = !postSaved;
-    setPostSaved(next);
-    try {
-      await toggleSavePost({ visitId: post.id, save: next });
-      if (next) showToast('Publicación guardada');
-    } catch {
-      setPostSaved(!next);
-    }
-  }
-
-  async function handleShare() {
-    const name = getDisplayName(post.restaurant as any, 'post');
-    const score = post.rank_score;
-    const url = `https://fudi.app/visit/${post.id}`;
-    try {
-      await (await import('react-native')).Share.share({
-        message: `"${name}"${score != null ? ` — ${score.toFixed(1)}/10` : ''} en fudi.\n${url}`,
-        url,
-        title: `${name} en fudi`,
-      });
-    } catch {
-      // dismissed
-    }
-  }
-
-  return (
-    <AnimatedCard
-      style={styles.card}
-      onPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-        router.push(`/visit/${post.id}`);
-      }}
-    >
-      {/* Card header */}
-      <View style={styles.cardHeader}>
-        <TouchableOpacity
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}
-          onPress={() => router.push(`/profile/${post.user.id}`)}
-          activeOpacity={0.75}
-        >
-          {post.user.avatar_url ? (
-            <ExpoImage
-              source={{ uri: post.user.avatar_url }}
-              style={styles.userAvatar}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-              transition={150}
-            />
-          ) : (
-            <View style={[styles.userAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-              <MaterialIcons name="person" size={18} color="#727973" />
-            </View>
-          )}
-          <View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.userName}>{post.user.name}</Text>
-              {showRelationLabel && <RelationLabel isMutual={post.is_mutual} />}
-            </View>
-            <Text style={styles.timeText}>{timeAgo(post.visited_at)}</Text>
-          </View>
-        </TouchableOpacity>
-        {(post.rank_score ?? 0) > 0 && (
-          <ScoreBadge score={post.rank_score!} />
-        )}
-      </View>
-
-      {/* Image carousel — restaurant photos first, then dish photos */}
-      {frames.length > 0 ? (
-        <View style={{ aspectRatio: 1, width: '100%', overflow: 'hidden' }}>
-          <FlatList
-            data={frames}
-            horizontal
-            pagingEnabled
-            bounces={false}
-            showsHorizontalScrollIndicator={false}
-            decelerationRate="fast"
-            snapToAlignment="start"
-            getItemLayout={(_, index) => ({
-              length: SCREEN_WIDTH - 32,
-              offset: (SCREEN_WIDTH - 32) * index,
-              index,
-            })}
-            keyExtractor={(_, i) => String(i)}
-            onViewableItemsChanged={onViewableItemsChanged}
-            viewabilityConfig={viewabilityConfig}
-            renderItem={({ item: frame }) => (
-              <View style={{ width: SCREEN_WIDTH - 32, aspectRatio: 1 }}>
-                <ExpoImage
-                  source={{ uri: frame.url }}
-                  style={{ width: '100%', height: '100%' }}
-                  contentFit="cover"
-                  transition={200}
-                  cachePolicy="memory-disk"
-                  recyclingKey={frame.url}
-                />
-                {/* Gradient overlay */}
-                <LinearGradient
-                  colors={['transparent', 'rgba(3,36,23,0.45)', 'rgba(3,36,23,0.88)']}
-                  style={[StyleSheet.absoluteFillObject, { justifyContent: 'flex-end', padding: 18, paddingBottom: frames.length > 1 ? 32 : 18 }]}
-                  pointerEvents="none"
-                >
-                  {frame.kind === 'restaurant' ? (
-                    <>
-                      {post.restaurant.neighborhood ? (
-                        <Text style={{ fontFamily: 'Manrope-ExtraBold', fontSize: 10, color: '#c7ef48', textTransform: 'uppercase', letterSpacing: 3, marginBottom: 4 }}>
-                          {post.restaurant.neighborhood}
-                        </Text>
-                      ) : null}
-                      <Text style={{ fontFamily: 'NotoSerif-BoldItalic', fontSize: 30, color: '#ffffff', lineHeight: 34 }} numberOfLines={2}>
-                        {getDisplayName(post.restaurant as any, 'post')}
-                      </Text>
-                      {post.restaurant.cuisine ? (
-                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
-                          <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }}>
-                            <Text style={{ fontFamily: 'Manrope-Medium', fontSize: 11, color: 'rgba(255,255,255,0.9)' }}>{post.restaurant.cuisine}</Text>
-                          </View>
-                        </View>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      {frame.highlighted && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-                          <View style={{ backgroundColor: '#c7ef48', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-                            <Text style={{ fontFamily: 'Manrope-ExtraBold', fontSize: 10, color: '#546b00', textTransform: 'uppercase', letterSpacing: 1.5 }}>
-                              ★ Destacado
-                            </Text>
-                          </View>
-                        </View>
-                      )}
-                      {frame.dishName ? (
-                        <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 22, color: '#ffffff', lineHeight: 27 }} numberOfLines={2}>
-                          {frame.dishName}
-                        </Text>
-                      ) : null}
-                    </>
-                  )}
-                </LinearGradient>
-              </View>
-            )}
-          />
-
-          {/* Pagination dots */}
-          {frames.length > 1 && (
-            <View style={[styles.dotsContainer, { position: 'absolute', bottom: 8, left: 0, right: 0, paddingVertical: 0 }]}>
-              {frames.map((_: any, i: number) => (
-                <View key={i} style={[styles.dot, i === imgIndex ? styles.dotActive : styles.dotInactive,
-                  { width: i === imgIndex ? 16 : 6 }]} />
-              ))}
-            </View>
-          )}
-        </View>
-      ) : (
-        /* No photo — compact restaurant banner */
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => router.push(`/visit/${post.id}`)}
-          style={styles.noPhotoBanner}
-        >
-          <View style={{ flex: 1 }}>
-            {post.restaurant.neighborhood ? (
-              <Text style={styles.noPhotoNeighborhood}>{post.restaurant.neighborhood}</Text>
-            ) : null}
-            <Text style={styles.noPhotoName} numberOfLines={1}>
-              {getDisplayName(post.restaurant as any, 'post')}
-            </Text>
-            {post.restaurant.cuisine ? (
-              <Text style={styles.noPhotoCuisine}>{post.restaurant.cuisine}</Text>
-            ) : null}
-          </View>
-          <MaterialIcons name="chevron-right" size={20} color="rgba(199,239,72,0.6)" />
-        </TouchableOpacity>
-      )}
-
-      {/* Action bar — right below the image, like Instagram */}
-      <View style={styles.actionBar}>
-        <TouchableOpacity
-          style={styles.likeBtn}
-          activeOpacity={0.7}
-          onPress={handleLike}
-          disabled={!currentUserId || currentUserId === post.user.id}
-          accessibilityLabel={likeActive ? 'Quitar me gusta' : 'Me gusta'}
-        >
-          <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-            <MaterialIcons
-              name={likeActive ? 'favorite' : 'favorite-border'}
-              size={24}
-              color={likeActive ? '#e0314b' : '#1c1c18'}
-            />
-          </Animated.View>
-          {likeCount > 0 && (
-            <Text style={[styles.likeCount, likeActive && styles.likeCountActive]}>
-              {likeCount}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={handleBookmark}
-          activeOpacity={0.7}
-          style={[styles.saveBtn, postSaved && styles.saveBtnActive]}
-          accessibilityLabel={postSaved ? 'Guardado' : 'Guardar publicación'}
-        >
-          <MaterialIcons
-            name={postSaved ? 'bookmark-added' : 'bookmark-add'}
-            size={20}
-            color={postSaved ? '#032417' : '#727973'}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Caption + Dishes — tapping anywhere opens the post */}
-      <TouchableOpacity
-        activeOpacity={0.75}
-        onPress={() => router.push(`/visit/${post.id}`)}
-      >
-        {post.note && (
-          <View style={styles.captionWrapper}>
-            <Text style={styles.captionText} numberOfLines={3}>
-              <Text style={styles.captionUsername}>{post.user.name}{'  '}</Text>
-              {post.note}
-            </Text>
-          </View>
-        )}
-
-        {post.dishes && post.dishes.length > 0 && (
-          <View style={[styles.dishesSection, !post.note && { paddingTop: 4 }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-              <View style={{ width: 3, height: 12, backgroundColor: '#c7ef48', borderRadius: 2 }} />
-              <Text style={styles.sectionLabel}>COMANDA</Text>
-            </View>
-            <View style={styles.chipsRow}>
-              {(() => {
-                const sorted = [...(post.dishes as any[])]
-                  .filter((d: any) => (typeof d === 'string' ? d : d.name)?.trim())
-                  .sort((a, b) => (b.highlighted ? 1 : 0) - (a.highlighted ? 1 : 0));
-                const visible = sorted.slice(0, 4);
-                const overflow = Math.max(0, sorted.length - 4);
-                return (
-                  <>
-                    {visible.map((d: any, i: number) => {
-                      const name = typeof d === 'string' ? d : (d.name ?? '');
-                      const isHighlighted = typeof d === 'object' && d.highlighted;
-                      return (
-                        <View key={i} style={[styles.chip, isHighlighted && styles.chipHighlighted]}>
-                          {isHighlighted
-                            ? <Text style={styles.chipStar}>★</Text>
-                            : <MaterialIcons name="restaurant" size={9} color="#a0a6a1" />
-                          }
-                          <Text style={[styles.chipText, isHighlighted && styles.chipTextHighlighted]}>{name}</Text>
-                        </View>
-                      );
-                    })}
-                    {overflow > 0 && (
-                      <View style={styles.chip}>
-                        <Text style={[styles.chipText, { fontFamily: 'NotoSerif-Bold' }]}>+{overflow} más</Text>
-                      </View>
-                    )}
-                  </>
-                );
-              })()}
-            </View>
-          </View>
-        )}
-
-        {!post.note && (!post.dishes || post.dishes.length === 0) && (
-          <View style={{ paddingHorizontal: 20, paddingBottom: 16, paddingTop: 4 }}>
-            <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 12, color: '#c1c8c2' }}>
-              Ver publicación →
-            </Text>
-          </View>
-        )}
-      </TouchableOpacity>
-    </AnimatedCard>
-  );
+const emptyStyles = StyleSheet.create({
+  container: {
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 40,
+    alignItems: 'center',
+    gap: 20,
+  },
+  heroCard: {
+    width: '100%',
+    backgroundColor: COLORS.primaryContainer,
+    borderRadius: 24,
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    overflow: 'hidden',
+    alignItems: 'center',
+  },
+  heroLogo: {
+    fontFamily: 'NotoSerif-Bold',
+    fontSize: 48,
+    color: COLORS.surface,
+    letterSpacing: -1,
+  },
+  heroTagline: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 12,
+    color: COLORS.secondaryContainer,
+    letterSpacing: 4,
+    marginTop: 6,
+  },
+  heroDivider: {
+    width: 40,
+    height: 2,
+    backgroundColor: COLORS.secondaryContainer,
+    opacity: 0.4,
+    borderRadius: 1,
+    marginVertical: 16,
+  },
+  heroSubtitle: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 14,
+    color: COLORS.onPrimaryContainer,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  stepsCard: {
+    width: '100%',
+    backgroundColor: COLORS.surfaceContainerLowest,
+    borderRadius: 24,
+    padding: 24,
+    shadowColor: COLORS.onSurface,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 32,
+    elevation: 4,
+  },
+  stepsTitle: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 11,
+    color: COLORS.outline,
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
+    marginBottom: 20,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  stepBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.secondaryContainer,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 14,
+    color: COLORS.primary,
+  },
+  stepLabel: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 15,
+    color: COLORS.primary,
+  },
+  stepDesc: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 13,
+    color: COLORS.outline,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  stepDivider: {
+    height: 1,
+    backgroundColor: COLORS.surfaceContainer,
+    marginVertical: 16,
+    marginLeft: 46,
+  },
+  ctaPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: COLORS.primary,
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 999,
+    width: '100%',
+    marginTop: 4,
+  },
+  ctaPrimaryText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 16,
+    color: COLORS.onPrimary,
+  },
+  ctaSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: COLORS.secondaryContainer,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 999,
+    width: '100%',
+  },
+  ctaSecondaryText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 15,
+    color: COLORS.primary,
+  },
+  ctaTertiary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  ctaTertiaryText: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 14,
+    color: COLORS.outline,
+  },
 });
 
 const styles = StyleSheet.create({
@@ -1027,7 +788,7 @@ const styles = StyleSheet.create({
   },
   feedToggleTextActive: {
     fontFamily: 'Manrope-Bold',
-    color: '#032417',
+    color: COLORS.primary,
   },
   feedToggleUnderline: {
     position: 'absolute',
@@ -1035,7 +796,7 @@ const styles = StyleSheet.create({
     left: '20%',
     right: '20%',
     height: 2.5,
-    backgroundColor: '#032417',
+    backgroundColor: COLORS.primary,
     borderRadius: 2,
   },
   headerAvatar: {
@@ -1046,11 +807,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(3,36,23,0.05)',
   },
   logoText: {
-    fontStyle: 'italic',
-    fontSize: 24,
-    color: '#032417',
-    fontFamily: 'NotoSerif-Italic',
-    letterSpacing: -0.5,
+    fontSize: 26,
+    color: COLORS.primary,
+    fontFamily: 'NotoSerif-Bold',
+    letterSpacing: -1,
   },
   notifBadge: {
     position: 'absolute',
@@ -1059,273 +819,22 @@ const styles = StyleSheet.create({
     minWidth: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: '#ba1a1a',
+    backgroundColor: COLORS.error,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 3,
     borderWidth: 1.5,
-    borderColor: '#fdf9f2',
+    borderColor: COLORS.surface,
   },
   notifBadgeText: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 9,
-    color: '#ffffff',
+    color: COLORS.onPrimary,
   },
   feedContainer: {
     paddingTop: Platform.OS === 'ios' ? 152 : 132,
     paddingBottom: 110,
     paddingHorizontal: 16,
     gap: 24,
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    overflow: 'hidden',
-    shadowColor: '#1c1c18',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    elevation: 4,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-  },
-  userAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  userName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1c1c18',
-    fontFamily: 'Manrope-Bold',
-  },
-  timeText: {
-    fontSize: 12,
-    color: '#727973',
-    marginTop: 2,
-    fontFamily: 'Manrope-Regular',
-  },
-  scoreBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  scoreBadgeText: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 18,
-  },
-  imageGradient: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '60%',
-  },
-  imageOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 24,
-    paddingBottom: 20,
-  },
-  neighborhoodText: {
-    fontSize: 10,
-    fontFamily: 'Manrope-Bold',
-    letterSpacing: 3,
-    color: '#c7ef48',
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  restaurantNameText: {
-    fontFamily: 'NotoSerif-Bold',
-    fontSize: 30,
-    color: '#ffffff',
-    lineHeight: 36,
-  },
-  cityText: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.70)',
-    marginTop: 2,
-  },
-  noPhotoBanner: {
-    backgroundColor: '#f1ede6',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-  },
-  noPhotoNeighborhood: {
-    fontFamily: 'Manrope-Bold',
-    fontSize: 9,
-    color: '#727973',
-    textTransform: 'uppercase',
-    letterSpacing: 2,
-    marginBottom: 2,
-  },
-  noPhotoName: {
-    fontFamily: 'NotoSerif-BoldItalic',
-    fontSize: 18,
-    color: '#1c1c18',
-    lineHeight: 23,
-  },
-  noPhotoCuisine: {
-    fontFamily: 'Manrope-Medium',
-    fontSize: 11,
-    color: '#727973',
-    marginTop: 2,
-  },
-  bookmarkBtn: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(3,36,23,0.38)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.22)',
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  dotsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 12,
-    gap: 6,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  dotActive: { backgroundColor: '#032417' },
-  dotInactive: { backgroundColor: '#c1c8c2' },
-  dishesSection: {
-    paddingHorizontal: 24,
-    paddingBottom: 4,
-    gap: 10,
-  },
-  sectionLabel: {
-    fontSize: 10,
-    fontFamily: 'Manrope-Bold',
-    color: '#727973',
-    letterSpacing: 3,
-    textTransform: 'uppercase',
-  },
-  chipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#f1ede6',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 12,
-  },
-  chipHighlighted: {
-    backgroundColor: 'rgba(199,239,72,0.22)',
-  },
-  chipStar: {
-    fontSize: 10,
-    color: '#516600',
-    fontFamily: 'Manrope-Bold',
-  },
-  chipText: {
-    fontSize: 13,
-    fontFamily: 'Manrope-Medium',
-    color: '#032417',
-  },
-  chipTextHighlighted: {
-    color: '#516600',
-    fontFamily: 'Manrope-SemiBold',
-  },
-  companionsSection: {
-    paddingHorizontal: 24,
-    paddingTop: 12,
-    paddingBottom: 24,
-    gap: 8,
-  },
-  avatarsRow: {
-    flexDirection: 'row',
-  },
-  companionAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#ffffff',
-  },
-  actionBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  likeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  likeCount: {
-    fontFamily: 'Manrope-SemiBold',
-    fontSize: 14,
-    color: '#1c1c18',
-  },
-  likeCountActive: {
-    color: '#e0314b',
-  },
-  saveBtn: {
-    marginLeft: 12,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f1ede6',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  saveBtnActive: {
-    backgroundColor: '#c7ef48',
-  },
-  captionWrapper: {
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 12,
-  },
-  captionUsername: {
-    fontFamily: 'Manrope-ExtraBold',
-    fontSize: 13,
-    color: '#1c1c18',
-  },
-  captionText: {
-    fontFamily: 'Manrope-Regular',
-    fontSize: 13,
-    color: '#424844',
-    lineHeight: 19,
   },
 });

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { supabase } from '../supabase';
 
 // Shape returned for each feed post
@@ -9,9 +8,11 @@ export type FeedPost = {
   spend_per_person: '0-20' | '20-35' | '35-60' | '60+' | null;
   rank_score: number | null;
   sentiment: 'loved' | 'fine' | 'disliked' | null;
-  visibility: 'friends' | 'groups' | 'private';
+  visibility: 'public' | 'friends' | 'groups' | 'private';
   /** True if this user is a mutual friend, false if only followed (one-way) */
   is_mutual: boolean;
+  /** True if the current user follows this post's author (set by Para Ti feed) */
+  _iFollowAuthor?: boolean;
   user: {
     id: string;
     name: string;
@@ -39,19 +40,30 @@ export async function getFeed(
   currentUserId: string,
   { limit = 20, offset = 0 }: { limit?: number; offset?: number } = {}
 ): Promise<FeedPost[]> {
-  // Get all outgoing relationships (following + mutual)
-  const { data: rels, error: relsError } = await supabase
-    .from('relationships')
-    .select('target_id, type, affinity_score')
-    .eq('user_id', currentUserId)
-    .in('type', ['following', 'mutual']);
+  // Get outgoing and incoming relationships in parallel to detect mutuality bidirectionally
+  const [outgoingResult, incomingResult] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('target_id, type, affinity_score')
+      .eq('user_id', currentUserId)
+      .in('type', ['mutual', 'following']),
+    supabase
+      .from('relationships')
+      .select('user_id')
+      .eq('target_id', currentUserId)
+      .in('type', ['mutual', 'following']),
+  ]);
 
-  if (relsError) throw relsError;
+  if (outgoingResult.error) throw outgoingResult.error;
+  if (incomingResult.error) throw incomingResult.error;
 
-  const followingIds = (rels ?? []).map((r) => r.target_id);
-  // Build a Set of mutual friend IDs for quick lookup
+  const rels = outgoingResult.data ?? [];
+  const incomingIds = new Set((incomingResult.data ?? []).map((r) => r.user_id));
+
+  const followingIds = rels.map((r) => r.target_id);
+  // Build a Set of mutual friend IDs: user appears in BOTH outgoing and incoming
   const mutualSet = new Set(
-    (rels ?? []).filter((r) => r.type === 'mutual').map((r) => r.target_id)
+    followingIds.filter((id) => incomingIds.has(id))
   );
 
   const affinityMap = new Map<string, number>();
@@ -90,14 +102,20 @@ export async function getFeed(
   if (error) throw error;
 
   // Annotate with is_mutual; own posts count as mutual for the "Amigos" filter
-  const posts = ((data ?? []) as any[]).map((p) => ({
+  type RawVisitRow = {
+    user_id: string;
+    visited_at: string;
+    rank_score: number | null;
+    is_mutual?: boolean;
+  };
+  const posts = ((data ?? []) as unknown as RawVisitRow[]).map((p) => ({
     ...p,
     is_mutual: p.user_id === currentUserId || mutualSet.has(p.user_id),
   }));
 
   // Algorithmic feed score: affinity × quality × recency
   const now = Date.now();
-  function feedScore(p: any): number {
+  function feedScore(p: RawVisitRow & { is_mutual: boolean }): number {
     // Affinity factor (0-1): higher affinity friends rank higher
     const affinity = affinityMap.get(p.user_id) ?? (p.is_mutual ? 50 : 20);
     const affinityFactor = affinity / 100;

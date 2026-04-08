@@ -1,4 +1,3 @@
-// @ts-nocheck
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase } from './supabase';
@@ -20,7 +19,6 @@ export async function pickImage(options?: {
     allowsEditing: options?.allowsEditing ?? true,
     aspect: options?.aspect ?? [1, 1],
     quality: 1,                    // keep full quality — we compress in compressAndUpload
-    copyToCacheDirectory: true,    // ensures file:// URI on iOS
   });
 
   if (result.canceled || !result.assets?.[0]) return null;
@@ -41,7 +39,6 @@ export async function takePhoto(options?: {
     allowsEditing: true,
     aspect: options?.aspect ?? [1, 1],
     quality: 1,
-    copyToCacheDirectory: true,
   });
 
   if (result.canceled || !result.assets?.[0]) return null;

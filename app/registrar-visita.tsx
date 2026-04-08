@@ -21,6 +21,7 @@ import { useProfile } from '../lib/hooks/useProfile';
 import { searchUsers } from '../lib/api/users';
 import { searchPlaces, getPlaceDetails, resolvePhotoUrl, extractNeighborhood, type PlaceCandidate } from '../lib/api/places';
 import { upsertRestaurant, getRestaurant } from '../lib/api/restaurants';
+import * as Haptics from 'expo-haptics';
 import { pickImage, compressAndUpload } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 
@@ -61,6 +62,7 @@ export default function RegistrarVisitaScreen() {
   const [uploading, setUploading] = useState(false);
   const [taggedUserIds, setTaggedUserIds] = useState<string[]>([]);
   const [taggedUsers, setTaggedUsers] = useState<{ id: string; name: string; handle: string | null; avatar_url: string | null }[]>([]);
+  const [visibility, setVisibility] = useState<'public' | 'friends' | 'private'>('friends');
   const [handleInput, setHandleInput] = useState('');
   const [handleResults, setHandleResults] = useState<any[]>([]);
   const [handleSearching, setHandleSearching] = useState(false);
@@ -173,7 +175,10 @@ export default function RegistrarVisitaScreen() {
 
   function addDishToList(name: string) {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (trimmed.length < 3) {
+      if (trimmed.length > 0) showAlert('Nombre demasiado corto', 'El nombre del plato debe tener al menos 3 caracteres.');
+      return;
+    }
     if (addedDishes.some((d) => d.name.toLowerCase() === trimmed.toLowerCase())) return;
     setAddedDishes((prev) => [...prev, { name: trimmed, highlighted: false, photo: null }]);
     setDishInputValue('');
@@ -264,8 +269,6 @@ export default function RegistrarVisitaScreen() {
         }
       }
 
-      setUploading(false);
-
       const visit = await createVisit({
         user_id: currentUser.id,
         restaurant_id: selectedRestaurant.id,
@@ -274,7 +277,7 @@ export default function RegistrarVisitaScreen() {
         spend_per_person: spendPerPerson ?? null,
         dishes: finalDishes.map((d, i) => ({ name: d.name, highlighted: d.highlighted, position: i })),
         photos: uploadedRestaurantUrls.map((url) => ({ photo_url: url, type: 'restaurant' as const })),
-        visibility: 'friends',
+        visibility,
         dish_photo_urls: dishPhotoUrls,
         tagged_user_ids: taggedUserIds.length > 0 ? taggedUserIds : undefined,
       });
@@ -406,7 +409,7 @@ export default function RegistrarVisitaScreen() {
                   styles.sentimentBtn,
                   sentiment === s.key && { backgroundColor: s.color, borderColor: s.color },
                 ]}
-                onPress={() => setSentiment(s.key)}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); setSentiment(s.key); }}
                 activeOpacity={0.8}
               >
                 <MaterialIcons
@@ -742,6 +745,35 @@ export default function RegistrarVisitaScreen() {
               ))}
             </View>
           )}
+        </View>
+
+        {/* Visibility */}
+        <View style={{ gap: 10 }}>
+          <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 10, color: '#727973', letterSpacing: 2, textTransform: 'uppercase' }}>
+            VISIBILIDAD
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {([
+              { key: 'public' as const, label: 'Público', icon: 'public' as const },
+              { key: 'friends' as const, label: 'Amigos', icon: 'group' as const },
+              { key: 'private' as const, label: 'Solo yo', icon: 'lock' as const },
+            ]).map((v) => {
+              const active = visibility === v.key;
+              return (
+                <TouchableOpacity
+                  key={v.key}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 999, backgroundColor: active ? '#032417' : '#ebe8e1' }}
+                  onPress={() => setVisibility(v.key)}
+                  activeOpacity={0.75}
+                >
+                  <MaterialIcons name={v.icon} size={16} color={active ? '#c7ef48' : '#727973'} />
+                  <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 13, color: active ? '#c7ef48' : '#727973' }}>
+                    {v.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
         {/* CTA */}

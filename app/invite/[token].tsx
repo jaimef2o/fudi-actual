@@ -54,7 +54,7 @@ export default function InviteScreen() {
         showAlert(
           'Invitación ya usada',
           'Esta invitación ya fue reclamada por otra persona.',
-          [{ text: 'Ir a fudi', onPress: () => router.replace('/(tabs)/feed') }]
+          [{ text: 'Ir a savry', onPress: () => router.replace('/(tabs)/feed') }]
         );
       } else {
         showAlert('Error', 'No se pudo procesar la invitación. Inténtalo de nuevo.');
@@ -86,7 +86,7 @@ export default function InviteScreen() {
           onPress={() => router.replace('/auth')}
           activeOpacity={0.85}
         >
-          <Text style={styles.btnPrimaryText}>Ir a fudi</Text>
+          <Text style={styles.btnPrimaryText}>Ir a savry</Text>
         </TouchableOpacity>
       </View>
     );
@@ -99,7 +99,7 @@ export default function InviteScreen() {
   return (
     <View style={styles.root}>
       <View style={styles.hero}>
-        <Text style={styles.logoText}>fudi</Text>
+        <Text style={styles.logoText}>savry</Text>
       </View>
 
       <View style={styles.card}>
@@ -115,7 +115,7 @@ export default function InviteScreen() {
 
         <Text style={styles.headline}>
           <Text style={styles.inviterName}>{inviterName}</Text>
-          {' '}te invita a fudi
+          {' '}te invita a savry
         </Text>
         <Text style={styles.description}>
           El círculo gastronómico privado donde descubres dónde comen tus amigos y construyes tu propio ranking de restaurantes.
@@ -131,7 +131,7 @@ export default function InviteScreen() {
               onPress={() => router.replace('/auth')}
               activeOpacity={0.85}
             >
-              <Text style={styles.btnPrimaryText}>Ir a fudi →</Text>
+              <Text style={styles.btnPrimaryText}>Ir a savry →</Text>
             </TouchableOpacity>
           </>
         ) : (
@@ -144,7 +144,7 @@ export default function InviteScreen() {
             {claiming ? (
               <ActivityIndicator color="#032417" />
             ) : (
-              <Text style={styles.btnPrimaryText}>Unirme a fudi →</Text>
+              <Text style={styles.btnPrimaryText}>Unirme a savry →</Text>
             )}
           </TouchableOpacity>
         )}

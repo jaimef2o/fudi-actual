@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "fudi",
+    "name": "savry",
     "slug": "fudi-app",
     "version": "1.0.0",
     "newArchEnabled": false,
@@ -12,20 +12,20 @@
       "resizeMode": "contain",
       "backgroundColor": "#fdf9f2"
     },
-    "scheme": "fudi",
+    "scheme": "savry",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.fudi.app",
+      "bundleIdentifier": "com.savry.app",
       "buildNumber": "1",
       "associatedDomains": [
-        "applinks:fudi.app"
+        "applinks:savry.app"
       ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSCameraUsageDescription": "fudi usa la cámara para fotografiar tus platos.",
-        "NSPhotoLibraryUsageDescription": "fudi accede a tus fotos para añadir imágenes a tus visitas.",
-        "NSContactsUsageDescription": "fudi usa tus contactos para encontrar amigos.",
-        "NSLocationWhenInUseUsageDescription": "fudi usa tu ubicación para encontrar restaurantes cercanos."
+        "NSCameraUsageDescription": "savry usa la cámara para fotografiar tus platos.",
+        "NSPhotoLibraryUsageDescription": "savry accede a tus fotos para añadir imágenes a tus visitas.",
+        "NSContactsUsageDescription": "savry usa tus contactos para encontrar amigos.",
+        "NSLocationWhenInUseUsageDescription": "savry usa tu ubicación para encontrar restaurantes cercanos."
       }
     },
     "android": {
@@ -33,8 +33,40 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#fdf9f2"
       },
-      "package": "com.fudi.app",
+      "package": "com.savry.app",
       "versionCode": 1,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "savry.app",
+              "pathPrefix": "/invite"
+            },
+            {
+              "scheme": "https",
+              "host": "savry.app",
+              "pathPrefix": "/u"
+            },
+            {
+              "scheme": "https",
+              "host": "savry.app",
+              "pathPrefix": "/post"
+            },
+            {
+              "scheme": "https",
+              "host": "savry.app",
+              "pathPrefix": "/r"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "permissions": [
         "android.permission.READ_CONTACTS",
         "android.permission.CAMERA",
@@ -42,12 +74,13 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.VIBRATE",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.WRITE_CONTACTS"
       ]
     },
     "web": {
       "bundler": "metro",
-      "output": "spa",
+      "output": "single",
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
@@ -56,8 +89,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "fudi necesita acceso a tus fotos para añadir imágenes a tus visitas.",
-          "cameraPermission": "fudi necesita acceso a la cámara para fotografiar tus platos."
+          "photosPermission": "savry necesita acceso a tus fotos para añadir imágenes a tus visitas.",
+          "cameraPermission": "savry necesita acceso a la cámara para fotografiar tus platos."
         }
       ],
       [
@@ -69,6 +102,12 @@
         }
       ],
       "expo-apple-authentication",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "savry usa tus contactos para encontrar amigos que ya usan la app."
+        }
+      ],
       "@sentry/react-native"
     ],
     "extra": {
@@ -77,6 +116,12 @@
       },
       "router": {}
     },
-    "owner": "jaimefdez"
+    "owner": "jaimefdez",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/8a241d05-0e5e-4e38-8e41-43263c028886"
+    }
   }
 }

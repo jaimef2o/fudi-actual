@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { supabase } from '../supabase';
 import type { UserRow, RelationshipRow } from '../database.types';
 import { notifyNewFollower } from './notificationTriggers';
@@ -85,99 +84,52 @@ export type FollowRequest = {
   requester: UserRow;
 };
 
-// Mutual friends — bidirectional check (avoids needing type='mutual' which requires cross-user RLS)
-export async function getFriends(userId: string): Promise<FriendWithProfile[]> {
-  const [{ data: iFollow, error: e1 }, { data: followMe, error: e2 }] = await Promise.all([
-    supabase
-      .from('relationships')
-      .select('target_id, friend:users!target_id(*)')
-      .eq('user_id', userId),
-    supabase
-      .from('relationships')
-      .select('user_id')
-      .eq('target_id', userId),
-  ]);
-  if (e1) throw e1;
-  if (e2) throw e2;
+export type RelationshipStatus = 'none' | 'pending' | 'following' | 'mutual';
 
-  const followMeSet = new Set((followMe ?? []).map((r: any) => r.user_id));
-  // Mutual = I follow them AND they follow me
-  return (iFollow ?? []).filter((r: any) => followMeSet.has(r.target_id)) as FriendWithProfile[];
-}
-
-// People I follow who haven't followed back yet (outgoing one-way)
-export async function getFollowing(userId: string): Promise<FriendWithProfile[]> {
-  const [{ data: iFollow, error: e1 }, { data: followMe, error: e2 }] = await Promise.all([
-    supabase
-      .from('relationships')
-      .select('target_id, friend:users!target_id(*)')
-      .eq('user_id', userId),
-    supabase
-      .from('relationships')
-      .select('user_id')
-      .eq('target_id', userId),
-  ]);
-  if (e1) throw e1;
-  if (e2) throw e2;
-
-  const followMeSet = new Set((followMe ?? []).map((r: any) => r.user_id));
-  // One-way: I follow them but they don't follow me back
-  return (iFollow ?? []).filter((r: any) => !followMeSet.has(r.target_id)) as FriendWithProfile[];
-}
-
-// People who follow me but I haven't followed back (incoming requests)
-export async function getFollowRequests(userId: string): Promise<FollowRequest[]> {
-  const [{ data: followMe, error: e1 }, { data: iFollow, error: e2 }] = await Promise.all([
-    supabase
-      .from('relationships')
-      .select('user_id, created_at, requester:users!user_id(*)')
-      .eq('target_id', userId),
-    supabase
-      .from('relationships')
-      .select('target_id')
-      .eq('user_id', userId),
-  ]);
-  if (e1) throw e1;
-  if (e2) throw e2;
-
-  const iFollowSet = new Set((iFollow ?? []).map((r: any) => r.target_id));
-  // Requests = they follow me but I haven't followed back
-  return (followMe ?? []).filter((r: any) => !iFollowSet.has(r.user_id)) as unknown as FollowRequest[];
-}
-
-export async function getRelationship(
+/**
+ * Follow a user. Checks if the target is public or private:
+ * - Public: upsert with status 'active'
+ * - Private: upsert with status 'pending'
+ * Returns the resulting status ('active' | 'pending').
+ */
+export async function followUser(
   userId: string,
   targetId: string
-): Promise<RelationshipRow | null> {
-  const { data } = await supabase
-    .from('relationships')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('target_id', targetId)
-    .maybeSingle();
+): Promise<'active' | 'pending'> {
+  // Check if target user is public
+  const { data: targetUser, error: userErr } = await supabase
+    .from('users')
+    .select('is_public')
+    .eq('id', targetId)
+    .single();
 
-  return data;
-}
+  if (userErr) throw userErr;
 
-// Follow: only manage own row — mutuality is detected bidirectionally at query time
-export async function followUser(userId: string, targetId: string) {
+  const status = targetUser?.is_public === false ? 'pending' : 'active';
+
   const { error } = await supabase
     .from('relationships')
     .upsert(
-      { user_id: userId, target_id: targetId, type: 'following' },
+      { user_id: userId, target_id: targetId, type: 'following', status },
       { onConflict: 'user_id,target_id' }
     );
   if (error) throw error;
 
   // Fire-and-forget: notify the target user
-  supabase.from('users').select('name').eq('id', userId).single()
+  Promise.resolve(supabase.from('users').select('name').eq('id', userId).single())
     .then(({ data }) => {
-      if (data?.name) notifyNewFollower(data.name, targetId).catch(() => {});
+      if (data?.name) notifyNewFollower(data.name, targetId, status === 'pending').catch((err: unknown) => {
+        if (__DEV__) console.warn('[savry] notifyNewFollower failed:', err);
+      });
     })
-    .catch(() => {});
+    .catch((err: unknown) => {
+      if (__DEV__) console.warn('[savry] followUser notification setup failed:', err);
+    });
+
+  return status;
 }
 
-// Unfollow: just delete own row — no cross-user update needed
+/** Unfollow: delete the row regardless of status. */
 export async function unfollowUser(userId: string, targetId: string) {
   const { error } = await supabase
     .from('relationships')
@@ -185,6 +137,225 @@ export async function unfollowUser(userId: string, targetId: string) {
     .eq('user_id', userId)
     .eq('target_id', targetId);
   if (error) throw error;
+}
+
+/**
+ * Respond to an incoming follow request.
+ * - accept: update status from 'pending' to 'active'
+ * - reject: delete the row
+ */
+export async function respondToFollowRequest(
+  myId: string,
+  requesterId: string,
+  accept: boolean
+): Promise<void> {
+  if (accept) {
+    const { error } = await supabase
+      .from('relationships')
+      .update({ status: 'active' })
+      .eq('user_id', requesterId)
+      .eq('target_id', myId)
+      .eq('status', 'pending');
+    if (error) throw error;
+  } else {
+    const { error } = await supabase
+      .from('relationships')
+      .delete()
+      .eq('user_id', requesterId)
+      .eq('target_id', myId)
+      .eq('status', 'pending');
+    if (error) throw error;
+  }
+}
+
+/**
+ * Get the relationship status between two users:
+ * - 'mutual': both follow each other with status='active'
+ * - 'following': only userId follows targetId with status='active'
+ * - 'pending': userId has a pending follow request to targetId
+ * - 'none': no relationship
+ */
+export async function getRelationship(
+  userId: string,
+  targetId: string
+): Promise<RelationshipStatus> {
+  const [{ data: iFollowRow }, { data: theyFollowRow }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('type, status')
+      .eq('user_id', userId)
+      .eq('target_id', targetId)
+      .maybeSingle(),
+    supabase
+      .from('relationships')
+      .select('type, status')
+      .eq('user_id', targetId)
+      .eq('target_id', userId)
+      .eq('status', 'active')
+      .maybeSingle(),
+  ]);
+
+  // I have a pending request to them
+  if (iFollowRow && iFollowRow.status === 'pending') return 'pending';
+
+  const iFollow = !!iFollowRow && iFollowRow.status === 'active';
+  const theyFollow = !!theyFollowRow;
+
+  if (iFollow && theyFollow) return 'mutual';
+  if (iFollow) return 'following';
+  return 'none';
+}
+
+/**
+ * Return array of user IDs who are mutual friends (both directions active).
+ */
+export async function getMutualFriendIds(userId: string): Promise<string[]> {
+  const [{ data: iFollow, error: e1 }, { data: followMe, error: e2 }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('target_id')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .in('type', ['mutual', 'following']),
+    supabase
+      .from('relationships')
+      .select('user_id')
+      .eq('target_id', userId)
+      .eq('status', 'active')
+      .in('type', ['mutual', 'following']),
+  ]);
+  if (e1) throw e1;
+  if (e2) throw e2;
+
+  const followMeSet = new Set((followMe ?? []).map((r: { user_id: string }) => r.user_id));
+  return (iFollow ?? [])
+    .map((r: { target_id: string }) => r.target_id)
+    .filter((id: string) => followMeSet.has(id));
+}
+
+/**
+ * Mutual friends — bidirectional check, both directions must have status='active'.
+ */
+export async function getFriends(userId: string): Promise<FriendWithProfile[]> {
+  const [{ data: iFollow, error: e1 }, { data: followMe, error: e2 }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('target_id, affinity_score, friend:users!target_id(*)')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .in('type', ['mutual', 'following']),
+    supabase
+      .from('relationships')
+      .select('user_id')
+      .eq('target_id', userId)
+      .eq('status', 'active')
+      .in('type', ['mutual', 'following']),
+  ]);
+  if (e1) throw e1;
+  if (e2) throw e2;
+
+  type RelWithFriend = { target_id: string; affinity_score: number | null; friend: UserRow };
+  const followMeSet = new Set((followMe ?? []).map((r: { user_id: string }) => r.user_id));
+  // Mutual = I follow them AND they follow me, both active
+  const mutuals = ((iFollow ?? []) as unknown as RelWithFriend[]).filter((r) => followMeSet.has(r.target_id));
+
+  // Fetch visit stats (count + avg score) for each mutual friend
+  const friendIds = mutuals.map((r) => r.target_id);
+  if (friendIds.length > 0) {
+    const { data: visitStats } = await supabase
+      .from('visits')
+      .select('user_id, rank_score')
+      .in('user_id', friendIds);
+
+    const statsMap: Record<string, { count: number; total: number }> = {};
+    (visitStats ?? []).forEach((v: { user_id: string; rank_score: number | null }) => {
+      if (!statsMap[v.user_id]) statsMap[v.user_id] = { count: 0, total: 0 };
+      statsMap[v.user_id].count += 1;
+      if (v.rank_score != null) statsMap[v.user_id].total += Number(v.rank_score);
+    });
+
+    return mutuals.map((r) => {
+      const stats = statsMap[r.target_id];
+      return {
+        ...r,
+        visit_count: stats?.count ?? 0,
+        avg_score: stats && stats.count > 0 ? stats.total / stats.count : 0,
+      };
+    }) as unknown as FriendWithProfile[];
+  }
+
+  return mutuals as unknown as FriendWithProfile[];
+}
+
+/**
+ * People I follow (active) who haven't followed back yet (outgoing one-way).
+ */
+export async function getFollowing(userId: string): Promise<FriendWithProfile[]> {
+  const [{ data: iFollow, error: e1 }, { data: followMe, error: e2 }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('target_id, friend:users!target_id(*)')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .in('type', ['mutual', 'following']),
+    supabase
+      .from('relationships')
+      .select('user_id')
+      .eq('target_id', userId)
+      .eq('status', 'active')
+      .in('type', ['mutual', 'following']),
+  ]);
+  if (e1) throw e1;
+  if (e2) throw e2;
+
+  const followMeSet = new Set((followMe ?? []).map((r: { user_id: string }) => r.user_id));
+  // One-way: I follow them (active) but they don't follow me back
+  type RelWithFriendFollowing = { target_id: string; friend: UserRow };
+  return ((iFollow ?? []) as unknown as RelWithFriendFollowing[]).filter((r) => !followMeSet.has(r.target_id)) as unknown as FriendWithProfile[];
+}
+
+/**
+ * Pending incoming follow requests (status='pending' where target_id=userId).
+ */
+export async function getFollowRequests(userId: string): Promise<FollowRequest[]> {
+  const { data, error } = await supabase
+    .from('relationships')
+    .select('user_id, created_at, requester:users!user_id(*)')
+    .eq('target_id', userId)
+    .eq('status', 'pending');
+
+  if (error) throw error;
+  return (data ?? []) as unknown as FollowRequest[];
+}
+
+/**
+ * People who follow me (active) but I don't follow back yet.
+ * These are "new followers" the user can follow back.
+ */
+export async function getNewFollowers(userId: string): Promise<FollowRequest[]> {
+  const [{ data: followMe, error: e1 }, { data: iFollow, error: e2 }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('user_id, created_at, requester:users!user_id(*)')
+      .eq('target_id', userId)
+      .eq('status', 'active')
+      .in('type', ['mutual', 'following'])
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('relationships')
+      .select('target_id')
+      .eq('user_id', userId)
+      .eq('status', 'active'),
+  ]);
+  if (e1) throw e1;
+  if (e2) throw e2;
+
+  const iFollowSet = new Set((iFollow ?? []).map((r: { target_id: string }) => r.target_id));
+  // Only return followers I haven't followed back
+  type FollowMeRow = { user_id: string; created_at: string; requester: UserRow };
+  return ((followMe ?? []) as unknown as FollowMeRow[]).filter(
+    (r) => !iFollowSet.has(r.user_id)
+  ) as unknown as FollowRequest[];
 }
 
 // ─── Invitations ────────────────────────────────────────────────────────────
@@ -285,7 +456,7 @@ export async function claimInvitation(token: string, newUserId: string): Promise
 
 /**
  * Reject/dismiss an incoming follow request.
- * Deletes the relationship row where requester follows you (before you've followed back).
+ * Deletes the relationship row where requester follows you with status='pending'.
  */
 export async function rejectFollowRequest(
   requesterId: string,
@@ -295,7 +466,8 @@ export async function rejectFollowRequest(
     .from('relationships')
     .delete()
     .eq('user_id', requesterId)
-    .eq('target_id', currentUserId);
+    .eq('target_id', currentUserId)
+    .eq('status', 'pending');
   if (error) throw error;
 }
 
@@ -307,7 +479,8 @@ export async function getFollowerCount(userId: string): Promise<number> {
   const { count } = await supabase
     .from('relationships')
     .select('*', { count: 'exact', head: true })
-    .eq('target_id', userId);
+    .eq('target_id', userId)
+    .in('type', ['mutual', 'following']);
   return count ?? 0;
 }
 
@@ -315,7 +488,8 @@ export async function getFollowingCount(userId: string): Promise<number> {
   const { count } = await supabase
     .from('relationships')
     .select('*', { count: 'exact', head: true })
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .in('type', ['mutual', 'following']);
   return count ?? 0;
 }
 
@@ -332,7 +506,7 @@ export async function getSuggestedUsers(
     .eq('user_id', currentUserId);
 
   const alreadyFollowing = new Set<string>(
-    [(currentUserId), ...((rels ?? []).map((r: any) => r.target_id))]
+    [(currentUserId), ...((rels ?? []).map((r: { target_id: string }) => r.target_id))]
   );
 
   // Find users with most visits not already followed
@@ -342,11 +516,12 @@ export async function getSuggestedUsers(
     .eq('visibility', 'friends');
 
   if (!visitCounts || visitCounts.length === 0) {
-    // Fallback: just return some recent users
+    // Fallback: just return some recent public users
     const { data } = await supabase
       .from('users')
       .select('*')
       .neq('id', currentUserId)
+      .eq('is_public', true)
       .order('created_at', { ascending: false })
       .limit(limit);
     return (data ?? []).filter((u: UserRow) => !alreadyFollowing.has(u.id)).slice(0, limit);
@@ -355,7 +530,7 @@ export async function getSuggestedUsers(
   // Count visits per user
   const countMap: Record<string, number> = {};
   for (const v of visitCounts) {
-    const uid = (v as any).user_id;
+    const uid = v.user_id as string;
     if (!alreadyFollowing.has(uid)) {
       countMap[uid] = (countMap[uid] ?? 0) + 1;
     }
@@ -371,7 +546,8 @@ export async function getSuggestedUsers(
   const { data } = await supabase
     .from('users')
     .select('*')
-    .in('id', topUserIds);
+    .in('id', topUserIds)
+    .eq('is_public', true);
 
   // Preserve visit-count order
   const userMap = new Map((data ?? []).map((u: UserRow) => [u.id, u]));

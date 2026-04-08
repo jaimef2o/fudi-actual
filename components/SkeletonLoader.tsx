@@ -6,7 +6,7 @@
  *   <SkeletonBox shimmer={shimmer} height={48} width="70%" />
  */
 import { useEffect, useRef } from 'react';
-import { Animated, View, StyleSheet, Dimensions } from 'react-native';
+import { Animated, View, StyleSheet, Dimensions, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -22,7 +22,7 @@ export function useShimmer() {
       Animated.timing(shimmer, {
         toValue: 1,
         duration: 1100,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       })
     ).start();
     return () => shimmer.stopAnimation();

@@ -13,6 +13,7 @@ import {
   getFollowerCount,
   getFollowingCount,
   rejectFollowRequest,
+  getNewFollowers,
 } from '../api/users';
 
 export function useProfile(userId: string | undefined) {
@@ -31,7 +32,9 @@ export function useFriends(userId: string | undefined) {
     queryFn: () => getFriends(userId!),
     enabled: !!userId,
     staleTime: 2 * 60_000,       // 2min — friend list rarely changes
-    refetchInterval: 60_000,     // poll once per minute
+    gcTime:   5 * 60_000,
+    refetchInterval: 2 * 60_000, // poll every 2min
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -42,7 +45,9 @@ export function useFollowing(userId: string | undefined) {
     queryFn: () => getFollowing(userId!),
     enabled: !!userId,
     staleTime: 2 * 60_000,
-    refetchInterval: 60_000,
+    gcTime:   5 * 60_000,
+    refetchInterval: 2 * 60_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -52,8 +57,23 @@ export function useFollowRequests(userId: string | undefined) {
     queryKey: ['followRequests', userId],
     queryFn: () => getFollowRequests(userId!),
     enabled: !!userId,
-    staleTime: 30_000,
-    refetchInterval: 30_000,  // check for new requests every 30s
+    staleTime: 60_000,
+    gcTime:   2 * 60_000,
+    refetchInterval: 60_000,  // check for new requests every 60s
+    refetchIntervalInBackground: false,
+  });
+}
+
+// People who follow you (active) but you haven't followed back
+export function useNewFollowers(userId: string | undefined) {
+  return useQuery({
+    queryKey: ['newFollowers', userId],
+    queryFn: () => getNewFollowers(userId!),
+    enabled: !!userId,
+    staleTime: 60_000,
+    gcTime:   2 * 60_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -100,6 +120,8 @@ export function useFollowUser(currentUserId: string) {
       queryClient.invalidateQueries({ queryKey: ['following', targetId] });
       queryClient.invalidateQueries({ queryKey: ['followRequests', currentUserId] });
       queryClient.invalidateQueries({ queryKey: ['followRequests', targetId] });
+      queryClient.invalidateQueries({ queryKey: ['newFollowers', currentUserId] });
+      queryClient.invalidateQueries({ queryKey: ['newFollowers', targetId] });
       // Accepting a friend = new posts become visible in feed
       queryClient.invalidateQueries({ queryKey: ['feed', currentUserId] });
       // Discover "Amigos" mode may now show different restaurants
@@ -121,9 +143,15 @@ export function useUnfollowUser(currentUserId: string) {
       queryClient.invalidateQueries({ queryKey: ['following', targetId] });
       queryClient.invalidateQueries({ queryKey: ['followRequests', currentUserId] });
       queryClient.invalidateQueries({ queryKey: ['followRequests', targetId] });
+      queryClient.invalidateQueries({ queryKey: ['newFollowers', currentUserId] });
+      queryClient.invalidateQueries({ queryKey: ['newFollowers', targetId] });
       // Removing a friend removes their posts from feed
       queryClient.invalidateQueries({ queryKey: ['feed', currentUserId] });
       queryClient.invalidateQueries({ queryKey: ['discover'], exact: false });
+      // Restaurant screens show friend data — invalidate broadly
+      queryClient.invalidateQueries({ queryKey: ['friendDishesForRestaurant'] });
+      queryClient.invalidateQueries({ queryKey: ['restaurantStats'] });
+      queryClient.invalidateQueries({ queryKey: ['profile', targetId] });
     },
   });
 }

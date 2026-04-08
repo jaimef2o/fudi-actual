@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Animated, Text, StyleSheet } from 'react-native';
+import { Animated, Text, StyleSheet, Platform } from 'react-native';
 import { useAppStore } from '../store';
 
 export function Toast() {
@@ -13,14 +13,14 @@ export function Toast() {
     if (!toastMessage) return;
 
     Animated.parallel([
-      Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 80 }),
-      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, useNativeDriver: Platform.OS !== 'web', tension: 80 }),
+      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: Platform.OS !== 'web' }),
     ]).start();
 
     const timer = setTimeout(() => {
       Animated.parallel([
-        Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: true }),
-        Animated.timing(translateY, { toValue: 16, duration: 200, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(translateY, { toValue: 16, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
       ]).start(() => clearToast());
     }, 2500);
 

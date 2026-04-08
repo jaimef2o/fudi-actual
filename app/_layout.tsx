@@ -1,12 +1,13 @@
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Updates from 'expo-updates';
 import { useFonts } from 'expo-font';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import NetInfo from '@react-native-community/netinfo';
 import {
   NotoSerif_400Regular,
   NotoSerif_700Bold,
@@ -24,6 +25,7 @@ import { supabase } from '../lib/supabase';
 import { useAppStore } from '../store';
 import type { UserRow } from '../lib/database.types';
 import { initMonitoring, setMonitoringUser, getSentryErrorBoundary } from '../lib/monitoring';
+import { backfillAllChainNames } from '../lib/chains';
 import { Toast } from '../components/Toast';
 
 // Native fallback error boundary when Sentry is not available
@@ -50,7 +52,26 @@ initMonitoring();
 
 SplashScreen.preventAutoHideAsync();
 
-const queryClient = new QueryClient();
+// Wire up TanStack Query's online manager to NetInfo so mutations
+// queue automatically when the device is offline.
+onlineManager.setEventListener((setOnline) => {
+  return NetInfo.addEventListener((state) => {
+    setOnline(!!state.isConnected);
+  });
+});
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      gcTime: 1000 * 60 * 60 * 24,  // 24h — keep cached data for offline access
+      staleTime: 1000 * 60 * 5,      // 5min — avoid unnecessary refetches
+      retry: 2,
+    },
+    mutations: {
+      retry: 1,
+    },
+  },
+});
 
 // Sentry ErrorBoundary — null when Sentry isn't installed
 const SentryErrorBoundary = getSentryErrorBoundary();
@@ -130,6 +151,7 @@ function ErrorFallback() {
 export default function RootLayout() {
   const setCurrentUser = useAppStore((s) => s.setCurrentUser);
   const bootstrapped = useRef(false);
+  const [appReady, setAppReady] = useState(false);
 
   const [fontsLoaded] = useFonts({
     'NotoSerif-Regular': NotoSerif_400Regular,
@@ -185,7 +207,17 @@ export default function RootLayout() {
           // Verify the session is actually valid by checking the profile
           try {
             const dest = await loadProfile(session.user.id);
-            router.replace(dest === 'name' ? '/auth/name' : '/(tabs)/feed');
+            if (dest === 'name') {
+              router.replace('/auth/name');
+            } else {
+              // Only redirect to feed if we're on an auth screen or the root.
+              // Otherwise let the user stay on their direct URL (e.g. /amigos).
+              const currentPath = typeof window !== 'undefined' ? window.location?.pathname : '';
+              const isAuthOrRoot = !currentPath || currentPath === '/' || currentPath.startsWith('/auth');
+              if (isAuthOrRoot) {
+                router.replace('/(tabs)/feed');
+              }
+            }
           } catch {
             // Session is stale or profile fetch failed — sign out and go to auth
             await supabase.auth.signOut();
@@ -197,7 +229,11 @@ export default function RootLayout() {
       }
     }
 
-    bootstrap();
+    bootstrap().finally(() => {
+      setAppReady(true);
+      // Fire-and-forget: backfill chain_name for all restaurants
+      backfillAllChainNames();
+    });
 
     // Listen to future auth changes (login / logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -239,21 +275,37 @@ export default function RootLayout() {
         <Stack.Screen name="registrar-visita" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="comparison/[restaurantId]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="select-restaurant" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
-        <Stack.Screen name="auth/preferences" options={{ headerShown: false }} />
+        <Stack.Screen name="edit-visit/[id]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="profile/edit" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="invite/[token]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="saved-posts" options={{ headerShown: false, presentation: 'card' }} />
         <Stack.Screen name="refine-ranking" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="settings" options={{ headerShown: false, presentation: 'card' }} />
+        <Stack.Screen name="notifications" options={{ headerShown: false }} />
+        <Stack.Screen name="follow-requests" options={{ headerShown: false, presentation: 'card' }} />
+        <Stack.Screen name="contacts-import" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
       </Stack>
     </QueryClientProvider>
   );
+
+  const splashOverlay = fontsLoaded && !appReady ? (
+    <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, backgroundColor: '#032417', alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ fontFamily: 'NotoSerif-BoldItalic', fontSize: 42, color: '#c7ef48', letterSpacing: -1 }}>
+        savry
+      </Text>
+      <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: 'rgba(199,239,72,0.5)', marginTop: 8 }}>
+        Tu guía gastronómica social
+      </Text>
+      <ActivityIndicator size="small" color="#c7ef48" style={{ marginTop: 32 }} />
+    </View>
+  ) : null;
 
   if (SentryErrorBoundary) {
     return (
       <SentryErrorBoundary fallback={ErrorFallback}>
         {stackContent}
         <Toast />
+        {splashOverlay}
       </SentryErrorBoundary>
     );
   }
@@ -262,6 +314,7 @@ export default function RootLayout() {
     <NativeErrorBoundary fallback={ErrorFallback}>
       {stackContent}
       <Toast />
+      {splashOverlay}
     </NativeErrorBoundary>
   );
 }

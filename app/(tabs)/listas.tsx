@@ -25,6 +25,8 @@ import { useUserRanking, useSavedRestaurants } from '../../lib/hooks/useVisit';
 import { getDisplayName } from '../../lib/utils/restaurantName';
 import { extractPriceLabel } from '../../lib/api/places';
 import { useQueryClient } from '@tanstack/react-query';
+import { StaggerItem, ScoreReveal } from '../../components/Animations';
+import { COLORS } from '../../lib/theme/colors';
 
 // ── DATA ────────────────────────────────────────────────────────────────────
 
@@ -40,10 +42,10 @@ function ScoreCircle({ score }: { score: number }) {
   return (
     <View style={{ width: 48, height: 48, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={48} height={48} style={{ transform: [{ rotate: '-90deg' }] }}>
-        <Circle cx={24} cy={24} r={R} stroke="#e6e2db" strokeWidth={4} fill="transparent" />
+        <Circle cx={24} cy={24} r={R} stroke={COLORS.surfaceContainerHighest} strokeWidth={4} fill="transparent" />
         <Circle
           cx={24} cy={24} r={R}
-          stroke="#c7ef48"
+          stroke={COLORS.secondaryContainer}
           strokeWidth={4}
           fill="transparent"
           strokeDasharray={C}
@@ -51,7 +53,7 @@ function ScoreCircle({ score }: { score: number }) {
           strokeLinecap="round"
         />
       </Svg>
-      <Text style={[styles.scoreCircleText, { color: isHigh ? '#516600' : '#032417' }]}>{score.toFixed(1)}</Text>
+      <Text style={[styles.scoreCircleText, { color: isHigh ? COLORS.secondary : COLORS.primary }]}>{score.toFixed(1)}</Text>
     </View>
   );
 }
@@ -61,7 +63,7 @@ function ScoreCircle({ score }: { score: number }) {
 const fsStyles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(3,36,23,0.3)' },
   sheet: {
-    backgroundColor: '#fdf9f2',
+    backgroundColor: COLORS.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
@@ -69,23 +71,23 @@ const fsStyles = StyleSheet.create({
     paddingTop: 12,
     maxHeight: '80%',
   },
-  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#c1c8c2', alignSelf: 'center', marginBottom: 16 },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.outlineVariant, alignSelf: 'center', marginBottom: 16 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  title: { fontFamily: 'NotoSerif-Bold', fontSize: 20, color: '#032417' },
-  reset: { fontFamily: 'Manrope-Bold', fontSize: 13, color: '#727973', textDecorationLine: 'underline' },
-  sectionLabel: { fontFamily: 'Manrope-Bold', fontSize: 10, color: '#727973', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 },
+  title: { fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary },
+  reset: { fontFamily: 'Manrope-Bold', fontSize: 13, color: COLORS.outline, textDecorationLine: 'underline' },
+  sectionLabel: { fontFamily: 'Manrope-Bold', fontSize: 10, color: COLORS.outline, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 12 },
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: '#f7f3ec' },
-  chipActive: { backgroundColor: '#c7ef48' },
-  chipText: { fontFamily: 'Manrope-Medium', fontSize: 13, color: '#424844' },
-  chipTextActive: { fontFamily: 'Manrope-Bold', color: '#546b00' },
-  priceRow: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14, backgroundColor: '#f7f3ec', marginBottom: 8 },
-  priceRowActive: { backgroundColor: '#c7ef48' },
-  priceLabel: { fontFamily: 'Manrope-Bold', fontSize: 15, color: '#032417' },
-  priceLabelActive: { color: '#546b00' },
-  priceDesc: { fontFamily: 'Manrope-Regular', fontSize: 12, color: '#727973', marginTop: 2 },
-  applyBtn: { marginTop: 20, backgroundColor: '#032417', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
-  applyText: { fontFamily: 'Manrope-Bold', fontSize: 15, color: '#ffffff' },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: COLORS.surfaceContainerLow },
+  chipActive: { backgroundColor: COLORS.secondaryContainer },
+  chipText: { fontFamily: 'Manrope-Medium', fontSize: 13, color: COLORS.onSurfaceVariant },
+  chipTextActive: { fontFamily: 'Manrope-Bold', color: COLORS.onSecondaryContainer },
+  priceRow: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 14, backgroundColor: COLORS.surfaceContainerLow, marginBottom: 8 },
+  priceRowActive: { backgroundColor: COLORS.secondaryContainer },
+  priceLabel: { fontFamily: 'Manrope-Bold', fontSize: 15, color: COLORS.primary },
+  priceLabelActive: { color: COLORS.onSecondaryContainer },
+  priceDesc: { fontFamily: 'Manrope-Regular', fontSize: 12, color: COLORS.outline, marginTop: 2 },
+  applyBtn: { marginTop: 20, backgroundColor: COLORS.primary, paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
+  applyText: { fontFamily: 'Manrope-Bold', fontSize: 15, color: COLORS.onPrimary },
 });
 
 // ── MAIN ─────────────────────────────────────────────────────────────────────
@@ -213,7 +215,7 @@ export default function ListasScreen() {
     });
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fdf9f2' }}>
+    <View style={{ flex: 1, backgroundColor: COLORS.surface }}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -221,16 +223,16 @@ export default function ListasScreen() {
           activeOpacity={0.8}
           onPress={() => router.push('/refine-ranking')}
         >
-          <MaterialIcons name="tune" size={16} color="#032417" />
+          <MaterialIcons name="tune" size={16} color={COLORS.primary} />
           <Text style={styles.rankBtnText}>Rank</Text>
         </TouchableOpacity>
-        <Text style={styles.headerLogo}>Mis Listas</Text>
+        <Text style={styles.headerLogo}>Mi Historial</Text>
         <TouchableOpacity
           style={styles.headerBtn}
           activeOpacity={0.7}
-          onPress={() => showAlert('Notificaciones', 'Las notificaciones push estarán disponibles pronto.')}
+          onPress={() => router.push('/notifications')}
         >
-          <MaterialIcons name="notifications-none" size={24} color="#032417" />
+          <MaterialIcons name="notifications-none" size={24} color={COLORS.primary} />
         </TouchableOpacity>
       </View>
 
@@ -244,18 +246,13 @@ export default function ListasScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#032417"
-            colors={['#032417']}
+            tintColor={COLORS.primary}
+            colors={[COLORS.primary]}
           />
         }
       >
-        {/* Editorial title */}
-        <View style={styles.titleBlock}>
-          <Text style={styles.titleMain}>Mis Listas</Text>
-          <Text style={styles.titleSub}>
-            Tu ranking personal y tus restaurantes guardados.
-          </Text>
-        </View>
+        {/* Spacer for fixed header */}
+        <View style={{ height: Platform.OS === 'ios' ? 20 : 12 }} />
 
         {/* Sticky local tabs */}
         <View style={styles.tabsWrapper}>
@@ -267,10 +264,10 @@ export default function ListasScreen() {
               <MaterialIcons
                 name="format-list-numbered"
                 size={15}
-                color={activeTab === 'ranking' ? '#032417' : '#727973'}
+                color={activeTab === 'ranking' ? COLORS.primary : COLORS.outline}
               />
               <Text style={[styles.tabText, activeTab === 'ranking' && styles.tabTextActive]}>
-                Ranking
+                Historial
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -278,9 +275,9 @@ export default function ListasScreen() {
               onPress={() => { setActiveTab('guardados'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); }}
             >
               <MaterialIcons
-                name="favorite"
+                name="bookmark"
                 size={15}
-                color={activeTab === 'guardados' ? '#032417' : '#727973'}
+                color={activeTab === 'guardados' ? COLORS.primary : COLORS.outline}
               />
               <Text style={[styles.tabText, activeTab === 'guardados' && styles.tabTextActive]}>
                 Guardados
@@ -292,6 +289,29 @@ export default function ListasScreen() {
         {/* ── RANKING TAB ── */}
         {activeTab === 'ranking' && (
           <View style={styles.rankingSection}>
+            {/* Search */}
+            <View style={styles.searchBox}>
+              <MaterialIcons name="search" size={18} color={COLORS.outline} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Buscar en tu historial..."
+                placeholderTextColor="rgba(114,121,115,0.6)"
+                value={search}
+                onChangeText={setSearch}
+              />
+              {search.length > 0 && (
+                <TouchableOpacity onPress={() => setSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <MaterialIcons name="close" size={16} color={COLORS.outline} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {!loadingRanking && filteredRanking.length > 0 && (
+              <Text style={styles.resultsCount}>
+                {filteredRanking.length} restaurante{filteredRanking.length !== 1 ? 's' : ''} en tu ranking
+              </Text>
+            )}
+
             {loadingRanking && (
               <View style={{ gap: 0 }}>
                 {[0, 1, 2, 3, 4].map((i) => (
@@ -301,73 +321,84 @@ export default function ListasScreen() {
             )}
             {!loadingRanking && filteredRanking.length === 0 && (
               <View style={styles.emptyRanking}>
-                <MaterialIcons name="restaurant" size={36} color="#c1c8c2" />
+                <MaterialIcons name="restaurant" size={36} color={COLORS.outlineVariant} />
                 <Text style={styles.emptyRankingTitle}>
                   {(rankingData && rankingData.length === 0) ? 'Aún no has visitado nada' : 'Sin resultados'}
                 </Text>
                 <Text style={styles.emptyRankingText}>
                   {(rankingData && rankingData.length === 0)
-                    ? 'Registra tu primera visita y empieza tu ranking personal.'
+                    ? 'Registra tu primera visita y empieza tu historial gastronómico.'
                     : 'Ningún restaurante coincide con tu búsqueda.'}
                 </Text>
                 {(rankingData && rankingData.length === 0) && (
                   <TouchableOpacity
-                    style={{ marginTop: 16, backgroundColor: '#032417', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}
+                    style={{ marginTop: 16, backgroundColor: COLORS.primary, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 }}
                     onPress={() => router.push('/registrar-visita')}
                   >
-                    <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: '#ffffff' }}>Registrar visita</Text>
+                    <Text style={{ fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.onPrimary }}>Registrar visita</Text>
                   </TouchableOpacity>
                 )}
               </View>
             )}
             {!loadingRanking && filteredRanking.map((item: any, idx: number) => (
-              <TouchableOpacity
-                key={item.id}
-                style={[styles.rankItem, idx === 0 && styles.rankItemTop]}
-                activeOpacity={0.8}
-                onPress={() => router.push(`/restaurant/${item.id}`)}
-              >
-                {/* Photo + rank badge */}
-                <View style={styles.rankImageWrapper}>
-                  {item.image ? (
-                    <Image source={{ uri: item.image }} style={styles.rankImage} />
-                  ) : (
-                    <View style={[styles.rankImage, { backgroundColor: '#f1ede6', alignItems: 'center', justifyContent: 'center' }]}>
-                      <MaterialIcons name="restaurant" size={24} color="#c1c8c2" />
-                    </View>
-                  )}
-                  <View style={[
-                    styles.rankBadge,
-                    idx === 0 && styles.rankBadgeTop,
-                  ]}>
-                    <Text style={[
-                      styles.rankBadgeText,
-                      idx === 0 && styles.rankBadgeTextTop,
+              <StaggerItem key={item.id} index={idx} staggerMs={50}>
+                <TouchableOpacity
+                  style={[styles.rankItem, idx === 0 && styles.rankItemTop]}
+                  activeOpacity={0.8}
+                  onPress={() => router.push(`/restaurant/${item.id}`)}
+                >
+                  {/* Photo + rank badge */}
+                  <View style={styles.rankImageWrapper}>
+                    {item.image ? (
+                      <Image source={{ uri: item.image }} style={styles.rankImage} />
+                    ) : (
+                      <View style={[styles.rankImage, { backgroundColor: COLORS.surfaceContainer, alignItems: 'center', justifyContent: 'center' }]}>
+                        <MaterialIcons name="restaurant" size={24} color={COLORS.outlineVariant} />
+                      </View>
+                    )}
+                    <View style={[
+                      styles.rankBadge,
+                      idx === 0 && styles.rankBadgeTop,
                     ]}>
-                      #{idx + 1}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Info */}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rankName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
-                  {(item.cuisine || item.price) ? (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
-                      <InfoTag value={item.cuisine} />
-                      <InfoTag value={item.price} />
+                      <Text style={[
+                        styles.rankBadgeText,
+                        idx === 0 && styles.rankBadgeTextTop,
+                      ]}>
+                        #{idx + 1}
+                      </Text>
                     </View>
-                  ) : null}
-                </View>
+                  </View>
 
-                {/* Score circle */}
-                <ScoreCircle score={item.score} />
-              </TouchableOpacity>
+                  {/* Info */}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rankName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
+                    {item.neighborhood ? (
+                      <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 11, color: COLORS.outline, marginBottom: 4 }} numberOfLines={1}>{item.neighborhood}</Text>
+                    ) : null}
+                    {(item.cuisine || item.price) ? (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5 }}>
+                        <InfoTag value={item.cuisine} />
+                        <InfoTag value={item.price} />
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {/* Score + sentiment */}
+                  <View style={{ alignItems: 'center', gap: 4 }}>
+                    <ScoreReveal delay={150 + idx * 50}>
+                      <ScoreCircle score={item.score} />
+                    </ScoreReveal>
+                    {item.sentiment === 'loved' && <MaterialIcons name="favorite" size={12} color={COLORS.secondaryContainer} />}
+                    {item.sentiment === 'fine' && <MaterialIcons name="thumb-up" size={12} color={COLORS.outline} />}
+                    {item.sentiment === 'disliked' && <MaterialIcons name="thumb-down" size={12} color={COLORS.error} />}
+                  </View>
+                </TouchableOpacity>
+              </StaggerItem>
             ))}
 
             {/* Quote editorial */}
             <View style={styles.quoteBlock}>
-              <MaterialIcons name="format-quote" size={24} color="#c7ef48" />
+              <MaterialIcons name="format-quote" size={24} color={COLORS.secondaryContainer} />
               <Text style={styles.quoteText}>
                 Tu paladar, tu criterio. Este es el orden que tú has decidido.
               </Text>
@@ -381,7 +412,7 @@ export default function ListasScreen() {
             {/* Search */}
             <View style={styles.searchRow}>
               <View style={styles.searchBox}>
-                <MaterialIcons name="search" size={18} color="#727973" />
+                <MaterialIcons name="search" size={18} color={COLORS.outline} />
                 <TextInput
                   style={styles.searchInput}
                   placeholder="Buscar restaurante..."
@@ -391,7 +422,7 @@ export default function ListasScreen() {
                 />
                 {search.length > 0 && (
                   <TouchableOpacity onPress={() => setSearch('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <MaterialIcons name="close" size={16} color="#727973" />
+                    <MaterialIcons name="close" size={16} color={COLORS.outline} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -404,7 +435,7 @@ export default function ListasScreen() {
                 onPress={() => setSortOpen(!sortOpen)}
                 activeOpacity={0.75}
               >
-                <MaterialIcons name="swap-vert" size={15} color={activeSort !== 'Más reciente' ? '#546b00' : '#424844'} />
+                <MaterialIcons name="swap-vert" size={15} color={activeSort !== 'Más reciente' ? COLORS.onSecondaryContainer : COLORS.onSurfaceVariant} />
                 <Text style={[styles.controlBtnText, activeSort !== 'Más reciente' && styles.controlBtnTextActive]}>
                   {activeSort === 'Más reciente' ? 'Ordenar' : activeSort === 'Mejor valorado' ? 'Valoración' : 'A-Z'}
                 </Text>
@@ -418,7 +449,7 @@ export default function ListasScreen() {
                 <Text style={[styles.controlBtnText, totalFilters > 0 && styles.controlBtnTextActive]}>
                   Filtros{totalFilters > 0 ? ` (${totalFilters})` : ''}
                 </Text>
-                <MaterialIcons name="tune" size={15} color={totalFilters > 0 ? '#546b00' : '#424844'} />
+                <MaterialIcons name="tune" size={15} color={totalFilters > 0 ? COLORS.onSecondaryContainer : COLORS.onSurfaceVariant} />
               </TouchableOpacity>
 
               {(totalFilters > 0 || search.trim().length > 0 || activeSort !== 'Más reciente') && (
@@ -456,12 +487,12 @@ export default function ListasScreen() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activePillsRow}>
                 {appliedFilters.city.trim() !== '' && (
                   <TouchableOpacity
-                    style={[styles.activePill, { backgroundColor: '#1a3a2b' }]}
+                    style={[styles.activePill, { backgroundColor: COLORS.primaryContainer }]}
                     onPress={() => setAppliedFilters((prev) => ({ ...prev, city: '', neighborhoods: [] }))}
                   >
-                    <MaterialIcons name="location-on" size={12} color="#c7ef48" />
-                    <Text style={[styles.activePillText, { color: '#c7ef48' }]}>{appliedFilters.city}</Text>
-                    <MaterialIcons name="close" size={12} color="#c7ef48" />
+                    <MaterialIcons name="location-on" size={12} color={COLORS.secondaryContainer} />
+                    <Text style={[styles.activePillText, { color: COLORS.secondaryContainer }]}>{appliedFilters.city}</Text>
+                    <MaterialIcons name="close" size={12} color={COLORS.secondaryContainer} />
                   </TouchableOpacity>
                 )}
                 {appliedFilters.neighborhoods.map((n) => (
@@ -503,15 +534,15 @@ export default function ListasScreen() {
             {/* Saved list */}
             {!loadingSaved && savedItems.length === 0 ? (
               <View style={styles.emptyState}>
-                <MaterialIcons name="bookmark-border" size={40} color="#c1c8c2" />
+                <MaterialIcons name="bookmark-border" size={40} color={COLORS.outlineVariant} />
                 <Text style={styles.emptyText}>Aún no has guardado ningún restaurante</Text>
-                <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973', textAlign: 'center', marginTop: 4 }}>
+                <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: COLORS.outline, textAlign: 'center', marginTop: 4 }}>
                   Pulsa el icono del marcador en cualquier restaurante
                 </Text>
               </View>
             ) : !loadingSaved && filteredGuardados.length === 0 ? (
               <View style={styles.emptyState}>
-                <MaterialIcons name="search-off" size={40} color="#c1c8c2" />
+                <MaterialIcons name="search-off" size={40} color={COLORS.outlineVariant} />
                 <Text style={styles.emptyText}>Sin resultados</Text>
                 <TouchableOpacity onPress={() => { setSearch(''); setAppliedFilters({ ...EMPTY_FILTERS }); }}>
                   <Text style={styles.emptyReset}>Quitar filtros</Text>
@@ -519,9 +550,9 @@ export default function ListasScreen() {
               </View>
             ) : (
               <View style={styles.savedList}>
-                {filteredGuardados.map((item: any) => (
+                {filteredGuardados.map((item: any, idx: number) => (
+                  <StaggerItem key={item.id} index={idx} staggerMs={45}>
                   <TouchableOpacity
-                    key={item.id}
                     style={styles.savedItem}
                     activeOpacity={0.8}
                     onPress={() => router.push(`/restaurant/${item.id}`)}
@@ -529,14 +560,17 @@ export default function ListasScreen() {
                     {item.image ? (
                       <Image source={{ uri: item.image }} style={styles.savedImage} />
                     ) : (
-                      <View style={[styles.savedImage, { backgroundColor: '#f1ede6', alignItems: 'center', justifyContent: 'center' }]}>
-                        <MaterialIcons name="restaurant" size={22} color="#c1c8c2" />
+                      <View style={[styles.savedImage, { backgroundColor: COLORS.surfaceContainer, alignItems: 'center', justifyContent: 'center' }]}>
+                        <MaterialIcons name="restaurant" size={22} color={COLORS.outlineVariant} />
                       </View>
                     )}
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.savedName}>{item.name}</Text>
+                      <Text style={styles.savedName} numberOfLines={1} ellipsizeMode="tail">{item.name}</Text>
+                      {item.neighborhood ? (
+                        <Text style={styles.savedNeighborhood} numberOfLines={1}>{item.neighborhood}</Text>
+                      ) : null}
                       {(item.cuisine || item.price) ? (
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5 }}>
                           <InfoTag value={item.cuisine} />
                           <InfoTag value={item.price} />
                         </View>
@@ -546,6 +580,7 @@ export default function ListasScreen() {
                       <Text style={styles.savedDate}>{item.savedAt}</Text>
                     </View>
                   </TouchableOpacity>
+                  </StaggerItem>
                 ))}
               </View>
             )}
@@ -567,7 +602,7 @@ export default function ListasScreen() {
               </TouchableOpacity>
               <Text style={fsStyles.title}>Filtros</Text>
               <TouchableOpacity onPress={() => setFilterOpen(false)}>
-                <MaterialIcons name="close" size={22} color="#032417" />
+                <MaterialIcons name="close" size={22} color={COLORS.primary} />
               </TouchableOpacity>
             </View>
             <LocationFilterBar filters={draftFilters} onChange={setDraftFilters} />
@@ -605,7 +640,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
@@ -613,12 +648,12 @@ const styles = StyleSheet.create({
   rankBtnText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#032417',
+    color: COLORS.primary,
   },
   headerLogo: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 20,
-    color: '#032417',
+    color: COLORS.primary,
   },
   titleBlock: {
     paddingTop: Platform.OS === 'ios' ? 124 : 104,
@@ -628,24 +663,25 @@ const styles = StyleSheet.create({
   titleMain: {
     fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 36,
-    color: '#032417',
+    color: COLORS.primary,
     lineHeight: 42,
   },
   titleSub: {
     fontFamily: 'Manrope-Regular',
     fontSize: 14,
-    color: '#727973',
+    color: COLORS.outline,
     marginTop: 6,
     lineHeight: 20,
   },
   tabsWrapper: {
-    backgroundColor: '#fdf9f2',
+    backgroundColor: COLORS.surface,
     paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 108 : 88,
     paddingBottom: 12,
   },
   tabsContainer: {
     flexDirection: 'row',
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 14,
     padding: 4,
   },
@@ -659,8 +695,8 @@ const styles = StyleSheet.create({
     borderRadius: 11,
   },
   tabActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#000',
+    backgroundColor: COLORS.surfaceContainerLowest,
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
     shadowRadius: 2,
@@ -669,9 +705,9 @@ const styles = StyleSheet.create({
   tabText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#727973',
+    color: COLORS.outline,
   },
-  tabTextActive: { color: '#032417' },
+  tabTextActive: { color: COLORS.primary },
 
   // Ranking
   rankingSection: {
@@ -683,19 +719,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 16,
     padding: 14,
-    shadowColor: '#1c1c18',
+    shadowColor: COLORS.onSurface,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.07,
     shadowRadius: 12,
     elevation: 3,
   },
   rankItemTop: {
-    backgroundColor: '#fafff2',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderWidth: 1.5,
-    borderColor: '#c7ef48',
+    borderColor: COLORS.secondaryContainer,
     shadowOpacity: 0.12,
     shadowRadius: 16,
     elevation: 5,
@@ -712,23 +748,23 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -8,
     left: -8,
-    backgroundColor: '#ebe8e1',
+    backgroundColor: COLORS.surfaceContainerHigh,
     width: 26,
     height: 26,
     borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#ffffff',
+    borderColor: COLORS.surfaceContainerLowest,
   },
   rankBadgeTop: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     width: 28,
     height: 28,
     borderRadius: 14,
     top: -9,
     left: -9,
-    shadowColor: '#546b00',
+    shadowColor: COLORS.onSecondaryContainer,
     shadowOpacity: 0.3,
     shadowOffset: { width: 0, height: 2 },
     shadowRadius: 4,
@@ -737,16 +773,16 @@ const styles = StyleSheet.create({
   rankBadgeText: {
     fontFamily: 'Manrope-ExtraBold',
     fontSize: 9,
-    color: '#727973',
+    color: COLORS.outline,
   },
   rankBadgeTextTop: {
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
     fontSize: 10,
   },
   rankName: {
     fontFamily: 'NotoSerif-BoldItalic',
     fontSize: 17,
-    color: '#032417',
+    color: COLORS.primary,
     marginBottom: 5,
   },
   rankChips: {
@@ -755,7 +791,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   chip: {
-    backgroundColor: '#f1ede6',
+    backgroundColor: COLORS.surfaceContainer,
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -763,13 +799,13 @@ const styles = StyleSheet.create({
   chipText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 10,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
   },
   chipPrice: {
-    backgroundColor: '#eaf3d0',
+    backgroundColor: COLORS.surfaceContainerLow,
   },
   chipPriceText: {
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   scoreCircleText: {
     position: 'absolute',
@@ -784,12 +820,12 @@ const styles = StyleSheet.create({
   emptyRankingTitle: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 17,
-    color: '#032417',
+    color: COLORS.primary,
   },
   emptyRankingText: {
     fontFamily: 'Manrope-Regular',
     fontSize: 13,
-    color: '#727973',
+    color: COLORS.outline,
     textAlign: 'center',
   },
   quoteBlock: {
@@ -800,7 +836,7 @@ const styles = StyleSheet.create({
   quoteText: {
     fontFamily: 'NotoSerif-Italic',
     fontSize: 14,
-    color: '#727973',
+    color: COLORS.outline,
     textAlign: 'center',
     lineHeight: 22,
     paddingHorizontal: 20,
@@ -818,7 +854,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 11,
@@ -827,7 +863,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: 'Manrope-Regular',
     fontSize: 14,
-    color: '#1c1c18',
+    color: COLORS.onSurface,
   },
   controlsRow: {
     flexDirection: 'row',
@@ -844,7 +880,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 999,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderWidth: 1,
     borderColor: 'rgba(193,200,194,0.3)',
   },
@@ -995,7 +1031,7 @@ const styles = StyleSheet.create({
   savedDate: {
     fontFamily: 'Manrope-Regular',
     fontSize: 10,
-    color: '#c1c8c2',
+    color: '#727973',
   },
   emptyState: {
     alignItems: 'center',

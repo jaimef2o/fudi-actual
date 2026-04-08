@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { supabase } from '../supabase';
 import type { VisitRow, VisitDishRow, VisitPhotoRow } from '../database.types';
 import { refreshAffinityForUser } from './affinity';
@@ -84,9 +83,9 @@ export async function getUserRanking(userId: string): Promise<VisitDetail[]> {
   // For chains: all locations of the same chain collapse into one entry.
   const seen = new Map<string, { visit: VisitDetail; mostRecentScore: number }>();
   for (const v of visits) {
-    const r = v.restaurant as any;
+    const r = v.restaurant;
     // Group by chain_name if it exists, otherwise by restaurant id
-    const groupKey = r.chain_name || r.id as string;
+    const groupKey = r.chain_name || r.id;
     const score = v.rank_score ?? 0;
     const visitedAt = v.visited_at ?? '';
     if (!seen.has(groupKey)) {
@@ -121,20 +120,55 @@ export async function getRestaurantExistingScore(
   userId: string,
   restaurantId: string
 ): Promise<{ score: number; visitCount: number } | null> {
-  const { data } = await supabase
-    .from('visits')
-    .select('rank_score, visited_at')
-    .eq('user_id', userId)
-    .eq('restaurant_id', restaurantId)
-    .not('rank_score', 'is', null)
-    .order('visited_at', { ascending: false });
+  // Parallel: fetch direct visits + restaurant chain_name at the same time
+  const [visitsResult, restaurantResult] = await Promise.all([
+    supabase
+      .from('visits')
+      .select('rank_score, visited_at')
+      .eq('user_id', userId)
+      .eq('restaurant_id', restaurantId)
+      .not('rank_score', 'is', null)
+      .order('visited_at', { ascending: false }),
+    supabase
+      .from('restaurants')
+      .select('chain_name')
+      .eq('id', restaurantId)
+      .single(),
+  ]);
 
-  if (!data || data.length === 0) return null;
+  const data = visitsResult.data;
+  if (data && data.length > 0) {
+    const mostRecent = data[0];
+    const score = Math.round((mostRecent.rank_score as number) * 10) / 10;
+    return { score, visitCount: data.length };
+  }
 
-  // Use the most recent visit's score as the canonical ranking score
-  const mostRecent = (data as any[])[0];
-  const score = Math.round((mostRecent.rank_score as number) * 10) / 10;
-  return { score, visitCount: data.length };
+  // No direct match — check chain siblings
+  try {
+    const restaurant = restaurantResult.data;
+    if (restaurant?.chain_name) {
+      const { data: chainVisits } = await supabase
+        .from('visits')
+        .select('rank_score, visited_at, restaurant:restaurants!restaurant_id(chain_name)')
+        .eq('user_id', userId)
+        .not('rank_score', 'is', null)
+        .order('visited_at', { ascending: false });
+
+      type ChainVisitRow = { rank_score: number | null; visited_at: string; restaurant: { chain_name: string | null } | null };
+      const matches = ((chainVisits ?? []) as unknown as ChainVisitRow[]).filter(
+        (v) => v.restaurant?.chain_name === restaurant.chain_name
+      );
+      if (matches.length > 0) {
+        const mostRecent = matches[0];
+        const score = Math.round((mostRecent.rank_score as number) * 10) / 10;
+        return { score, visitCount: matches.length };
+      }
+    }
+  } catch (err) {
+    if (__DEV__) console.warn('[savry] chain score lookup failed:', err);
+  }
+
+  return null;
 }
 
 // Update rank position after comparison
@@ -233,15 +267,17 @@ export async function recomputeRankPositions(userId: string): Promise<void> {
   // ── Step 4: Write new score + position to ALL visits of each restaurant ─────
   // All visits for the same restaurant share the same score and position, so
   // the ranking always shows each restaurant exactly once.
-  const writes: Promise<any>[] = [];
+  const writes: Promise<unknown>[] = [];
   updated.forEach((r, i) => {
     const position = i + 1;
     for (const visitId of r.ids) {
       writes.push(
-        supabase
-          .from('visits')
-          .update({ rank_score: r.newScore, rank_position: position })
-          .eq('id', visitId)
+        Promise.resolve(
+          supabase
+            .from('visits')
+            .update({ rank_score: r.newScore, rank_position: position })
+            .eq('id', visitId)
+        )
       );
     }
   });
@@ -300,6 +336,57 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
     ...(photos?.map((p) => p.photo_url) ?? []),
   ];
 
+  // 0. Revisit detection — if user has a prior visit to this restaurant (or same chain),
+  // blend the new score with the existing one (60% new, 40% old) for ranking continuity.
+  if (visitData.rank_score != null) {
+    try {
+      // Check for same restaurant first
+      const { data: priorVisits } = await supabase
+        .from('visits')
+        .select('rank_score, restaurant_id')
+        .eq('user_id', visitData.user_id)
+        .eq('restaurant_id', visitData.restaurant_id)
+        .not('rank_score', 'is', null)
+        .order('visited_at', { ascending: false })
+        .limit(1);
+
+      let priorScore: number | null = null;
+
+      if (priorVisits?.length) {
+        priorScore = priorVisits[0].rank_score;
+      } else {
+        // Check for same chain (different location)
+        const { data: restaurant } = await supabase
+          .from('restaurants')
+          .select('chain_name')
+          .eq('id', visitData.restaurant_id)
+          .single();
+
+        if (restaurant?.chain_name) {
+          const { data: chainVisits } = await supabase
+            .from('visits')
+            .select('rank_score, restaurant:restaurants!restaurant_id(chain_name)')
+            .eq('user_id', visitData.user_id)
+            .not('rank_score', 'is', null)
+            .order('visited_at', { ascending: false });
+
+          type ChainVisitMatch = { rank_score: number | null; restaurant: { chain_name: string | null } | null };
+          const chainMatch = ((chainVisits ?? []) as unknown as ChainVisitMatch[]).find(
+            (v) => v.restaurant?.chain_name === restaurant.chain_name
+          );
+          if (chainMatch) priorScore = chainMatch.rank_score;
+        }
+      }
+
+      // Weighted average: 60% new score, 40% prior score
+      if (priorScore != null) {
+        visitData.rank_score = Math.round((visitData.rank_score * 0.6 + priorScore * 0.4) * 10) / 10;
+      }
+    } catch (err) {
+      if (__DEV__) console.warn('[savry] revisit detection failed:', err);
+    }
+  }
+
   // 1. Insert the visit
   const { data: visit, error: visitError } = await supabase
     .from('visits')
@@ -315,7 +402,7 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
 
   // 2. Insert dishes (free-text, binary highlighted flag, insertion order)
   const validDishes = (dishes ?? []).filter((d) => d.name?.trim());
-  let insertedDishes: any[] = [];
+  let insertedDishes: VisitDishRow[] = [];
   if (validDishes.length > 0) {
     const { data: dishData, error: dishesError } = await supabase
       .from('visit_dishes')
@@ -370,25 +457,33 @@ export async function createVisit(input: CreateVisitInput): Promise<VisitRow> {
   }
 
   // Fire-and-forget: refresh affinity scores in background
-  refreshAffinityForUser(input.user_id).catch(() => {});
+  refreshAffinityForUser(input.user_id).catch((err) => {
+    if (__DEV__) console.warn('[savry] refreshAffinityForUser failed:', err);
+  });
 
   // Fire-and-forget: push notifications
   // Get restaurant name for notification text
-  supabase.from('restaurants').select('name').eq('id', input.restaurant_id).single()
+  Promise.resolve(supabase.from('restaurants').select('name').eq('id', input.restaurant_id).single())
     .then(({ data: rest }) => {
       if (!rest) return;
-      supabase.from('users').select('name').eq('id', input.user_id).single()
+      Promise.resolve(supabase.from('users').select('name').eq('id', input.user_id).single())
         .then(({ data: user }) => {
           if (!user) return;
           // Notify mutual friends about new visit
-          notifyNewVisit(input.user_id, user.name, rest.name, input.rank_score ?? null, visit.id).catch(() => {});
+          notifyNewVisit(input.user_id, user.name, rest.name, input.rank_score ?? null, visit.id).catch((err: unknown) => {
+            if (__DEV__) console.warn('[savry] notifyNewVisit failed:', err);
+          });
           // Notify tagged users
           if (tagged_user_ids?.length) {
-            notifyTaggedInVisit(user.name, rest.name, tagged_user_ids, visit.id).catch(() => {});
+            notifyTaggedInVisit(user.name, rest.name, tagged_user_ids, visit.id).catch((err: unknown) => {
+              if (__DEV__) console.warn('[savry] notifyTaggedInVisit failed:', err);
+            });
           }
         });
     })
-    .catch(() => {});
+    .catch((err: unknown) => {
+      if (__DEV__) console.warn('[savry] notification setup failed:', err);
+    });
 
   return visit;
 }
@@ -438,10 +533,12 @@ export async function updateVisitFull(
   }
 
   // 2. Replace dishes
+  // ⚠️ Non-atomic: if insert fails after delete, dishes are lost.
+  // TODO: Move to Supabase RPC with transaction for atomicity.
   if (dishes !== undefined) {
     const { error: delDishErr } = await supabase.from('visit_dishes').delete().eq('visit_id', visitId);
     if (delDishErr) throw delDishErr;
-    let insertedDishes: any[] = [];
+    let insertedDishes: VisitDishRow[] = [];
     if (dishes.length > 0) {
       const { data: dishData, error: dErr } = await supabase
         .from('visit_dishes')

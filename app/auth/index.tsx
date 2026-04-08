@@ -5,6 +5,8 @@ import {
   StyleSheet,
   Platform,
   StatusBar,
+  Linking,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -38,7 +40,7 @@ export default function AuthLandingScreen() {
       {/* Logo block */}
       <View style={s.hero}>
         <View style={s.logoContainer}>
-          <Text style={s.logo}>fudi</Text>
+          <Text style={s.logo}>savry</Text>
         </View>
         <Text style={s.tagline}>Tu círculo gastronómico</Text>
         <Text style={s.description}>
@@ -112,10 +114,10 @@ export default function AuthLandingScreen() {
       {/* Legal */}
       <Text style={s.legal}>
         Al continuar aceptas los{' '}
-        <Text style={s.legalLink}>Términos de Uso</Text>
+        <Text style={s.legalLink} onPress={() => Linking.openURL('https://savry.app/terms')}>Términos de Uso</Text>
         {' '}y la{' '}
-        <Text style={s.legalLink}>Política de Privacidad</Text>
-        {' '}de fudi.
+        <Text style={s.legalLink} onPress={() => Linking.openURL('https://savry.app/privacy')}>Política de Privacidad</Text>
+        {' '}de savry.
       </Text>
     </View>
   );
@@ -140,7 +142,7 @@ const s = StyleSheet.create({
     marginBottom: 8,
   },
   logo: {
-    fontFamily: 'NotoSerif-BoldItalic',
+    fontFamily: 'NotoSerif-Bold',
     fontSize: 64,
     color: '#032417',
     letterSpacing: -2,
@@ -237,6 +239,7 @@ const s = StyleSheet.create({
     lineHeight: 18,
   },
   legalLink: {
-    color: '#727973',
+    color: '#032417',
+    textDecorationLine: 'underline',
   },
 });

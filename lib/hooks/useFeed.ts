@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { getFeed, getUserFeed } from '../api/feed';
+import { getForYouFeed } from '../algorithm/forYou';
 import { supabase } from '../supabase';
 
 // Friends' posts — refetch every 3 min, keep stale for 2 min
@@ -14,7 +15,7 @@ export function useFeed(currentUserId: string | undefined) {
     const invalidate = () => queryClient.invalidateQueries({ queryKey: ['feed', currentUserId] });
     const channel = supabase
       .channel(`visits-feed-${currentUserId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'visits', filter: `visibility=eq.friends` }, invalidate)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'visits' }, invalidate)
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'visits' }, invalidate)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'visits' }, invalidate)
       .subscribe();
@@ -31,6 +32,20 @@ export function useFeed(currentUserId: string | undefined) {
     enabled: !!currentUserId,
     staleTime: 2 * 60_000,   // 2 min — don't refetch on every tab focus
     gcTime:   10 * 60_000,   // 10 min — keep in memory while navigating
+  });
+}
+
+// "Para Ti" algorithmic feed — public posts ranked by relevance
+export function useForYouFeed(userId: string | undefined) {
+  return useInfiniteQuery({
+    queryKey: ['feed', 'for-you', userId],
+    queryFn: ({ pageParam = 0 }) => getForYouFeed(userId!, pageParam),
+    getNextPageParam: (lastPage, pages) =>
+      lastPage.length === 20 ? pages.length * 20 : undefined,
+    initialPageParam: 0,
+    enabled: !!userId,
+    staleTime: 5 * 60_000,    // 5 min — algorithmic feed can stay fresher longer
+    gcTime:   30 * 60_000,    // 30 min — expensive to recompute
   });
 }
 

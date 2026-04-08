@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { supabase } from '../supabase';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -20,6 +19,7 @@ export type FriendVisitDishes = {
   userHandle: string | null;
   userAvatarUrl: string | null;
   visitedAt: string;
+  sentiment: 'loved' | 'fine' | 'disliked' | null;
   dishes: { id: string; name: string; highlighted: boolean }[];
 };
 
@@ -86,13 +86,23 @@ export async function getFriendDishesForRestaurant(
 ): Promise<FriendVisitDishes[]> {
   if (!restaurantIds.length) return [];
 
-  const { data: rels } = await supabase
-    .from('relationships')
-    .select('target_id')
-    .eq('user_id', myUserId)
-    .in('type', ['mutual', 'following']);
+  // Bidirectional mutual detection: both must follow each other with status='active'
+  const [{ data: outgoing }, { data: incoming }] = await Promise.all([
+    supabase
+      .from('relationships')
+      .select('target_id')
+      .eq('user_id', myUserId)
+      .in('type', ['mutual', 'following']),
+    supabase
+      .from('relationships')
+      .select('user_id')
+      .eq('target_id', myUserId)
+      .in('type', ['mutual', 'following']),
+  ]);
 
-  const friendIds = (rels ?? []).map((r: any) => r.target_id as string);
+  const outgoingIds = (outgoing ?? []).map((r: { target_id: string }) => r.target_id);
+  const incomingSet = new Set((incoming ?? []).map((r: { user_id: string }) => r.user_id));
+  const friendIds = outgoingIds.filter((id) => incomingSet.has(id));
   if (friendIds.length === 0) return [];
 
   const { data, error } = await supabase
@@ -100,6 +110,7 @@ export async function getFriendDishesForRestaurant(
     .select(`
       id,
       visited_at,
+      sentiment,
       user:users!user_id (id, name, handle, avatar_url),
       visit_dishes (id, name, highlighted, position)
     `)
@@ -110,22 +121,31 @@ export async function getFriendDishesForRestaurant(
 
   if (error) throw error;
 
-  return ((data ?? []) as any[])
+  type VisitWithJoins = {
+    id: string;
+    visited_at: string;
+    sentiment: string | null;
+    user: { id: string; name: string; handle: string | null; avatar_url: string | null } | null;
+    visit_dishes: { id: string; name: string; highlighted: boolean; position: number }[] | null;
+  };
+
+  return ((data ?? []) as unknown as VisitWithJoins[])
     .map((v) => ({
-      visitId: v.id as string,
-      userId: (v.user?.id ?? '') as string,
-      userName: (v.user?.name ?? '') as string,
-      userHandle: (v.user?.handle ?? null) as string | null,
-      userAvatarUrl: (v.user?.avatar_url ?? null) as string | null,
-      visitedAt: (v.visited_at ?? '') as string,
-      dishes: ((v.visit_dishes ?? []) as any[])
+      visitId: v.id,
+      userId: v.user?.id ?? '',
+      userName: v.user?.name ?? '',
+      userHandle: v.user?.handle ?? null,
+      userAvatarUrl: v.user?.avatar_url ?? null,
+      visitedAt: v.visited_at ?? '',
+      sentiment: (v.sentiment as 'loved' | 'fine' | 'disliked' | null) ?? null,
+      dishes: (v.visit_dishes ?? [])
         .sort((a, b) =>
           (b.highlighted ? 1 : 0) - (a.highlighted ? 1 : 0) || a.position - b.position
         )
         .map((d) => ({
-          id: d.id as string,
-          name: d.name as string,
-          highlighted: (d.highlighted ?? false) as boolean,
+          id: d.id,
+          name: d.name,
+          highlighted: d.highlighted ?? false,
         })),
     }))
     .filter((v) => v.dishes.length > 0);

@@ -92,7 +92,7 @@ export default function NameScreen() {
       }
       return;
     }
-    router.replace('/auth/preferences');
+    router.replace('/auth/profile-setup');
   }
 
   // Status indicator next to handle input
@@ -120,7 +120,7 @@ export default function NameScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.content}>
-          <Text style={styles.logo}>fudi</Text>
+          <Text style={styles.logo}>savry</Text>
           <Text style={styles.title}>¿Cómo te llamamos?</Text>
           <Text style={styles.subtitle}>
             Elige tu nombre visible y un handle único para que tus amigos puedan encontrarte.

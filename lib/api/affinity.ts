@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { supabase } from '../supabase';
 
 /**
@@ -102,9 +101,9 @@ export async function refreshAffinityForUser(userId: string): Promise<void> {
 
   if (!rels?.length) return;
 
-  const reverseSet = new Set((reverseRels ?? []).map((r: any) => r.user_id));
+  const reverseSet = new Set((reverseRels ?? []).map((r: { user_id: string }) => r.user_id));
   const mutualIds = (rels ?? [])
-    .map((r: any) => r.target_id)
+    .map((r: { target_id: string }) => r.target_id)
     .filter((id: string) => reverseSet.has(id));
 
   // Compute affinity for each mutual friend (limit to 50 to avoid timeout)

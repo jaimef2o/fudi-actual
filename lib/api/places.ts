@@ -152,6 +152,19 @@ export type PlaceDetails = {
   price_level?: number;
   types: string[];
   photos?: { photo_reference: string; width: number; height: number }[];
+  // Extended info (populated by getPlaceExtendedInfo)
+  formatted_phone_number?: string;
+  website?: string;
+  url?: string; // Google Maps URL
+  opening_hours?: { weekday_text?: string[] };
+};
+
+export type PlaceExtendedInfo = {
+  address?: string;
+  phone?: string;
+  website?: string;
+  mapsUrl?: string;
+  hours?: string[];
 };
 
 // ─── Mappers from v1 response shapes ─────────────────────────────────────────
@@ -270,9 +283,37 @@ export async function searchPlaces(query: string, city?: string | null): Promise
 
 /**
  * Fetch full place details by placeId using Google Places API v1.
+ * Checks local restaurants table first to avoid redundant API calls (~$0.017 each).
  * Supports CORS — works on both web and native.
  */
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
+  // Cache check: if we already have this restaurant, skip the Google API call
+  try {
+    const { supabase } = await import('../supabase');
+    const { data: cached } = await supabase
+      .from('restaurants')
+      .select('google_place_id, name, address, neighborhood, city, lat, lng, cuisine, price_level, cover_image_url')
+      .eq('google_place_id', placeId)
+      .maybeSingle();
+
+    if (cached) {
+      return {
+        place_id: cached.google_place_id ?? placeId,
+        name: cached.name,
+        formatted_address: cached.address ?? '',
+        vicinity: [cached.neighborhood, cached.city].filter(Boolean).join(', '),
+        geometry: { location: { lat: cached.lat ?? 0, lng: cached.lng ?? 0 } },
+        price_level: cached.price_level ?? undefined,
+        types: [],
+        photos: cached.cover_image_url
+          ? [{ photo_reference: cached.cover_image_url, width: 1200, height: 800 }]
+          : [],
+      };
+    }
+  } catch {
+    // Cache miss or error — proceed to Google API
+  }
+
   const fieldMask = [
     'id',
     'displayName',
@@ -349,6 +390,54 @@ export async function checkIsChainViaGoogle(
 }
 
 /**
+ * Search for all locations of a franchise chain via Google Places Text Search.
+ * Returns up to `maxResults` locations with name, address, placeId.
+ */
+export type ChainLocation = {
+  placeId: string;
+  name: string;
+  address: string | null;
+};
+
+export async function searchChainLocations(
+  chainName: string,
+  maxResults = 20
+): Promise<ChainLocation[]> {
+  if (!chainName.trim()) return [];
+
+  const body: Record<string, unknown> = {
+    textQuery:    chainName,
+    includedType: 'restaurant',
+    languageCode: 'es',
+    pageSize:     maxResults,
+  };
+
+  try {
+    const res = await fetch(`${V1_BASE}/places:searchText`, {
+      method:  'POST',
+      headers: v1Headers('places.id,places.displayName,places.formattedAddress'),
+      body:    JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (json.error) return [];
+
+    const chainNorm = chainName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return (json.places ?? [])
+      .filter((p: any) => {
+        const name = (p.displayName?.text ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return name.includes(chainNorm) || chainNorm.includes(name.split(' ')[0]);
+      })
+      .map((p: any) => ({
+        placeId: p.id ?? (p.name ?? '').replace('places/', ''),
+        name: p.displayName?.text ?? '',
+        address: p.formattedAddress ?? null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Returns a photo URL for a given photo reference.
  * Supports both v1 resource names (places/x/photos/y) and legacy photo_reference strings.
  */
@@ -393,6 +482,51 @@ export function getPhotoUrl(photoReference: string, maxWidth = 600): string {
     `&photo_reference=${photoReference}` +
     `&key=${API_KEY}`
   );
+}
+
+/**
+ * Fetch extended info (hours, phone, website, maps URL) from Google Places API v1.
+ * This is a separate call from getPlaceDetails to avoid breaking the cached flow
+ * and to only request these fields when needed (restaurant detail page).
+ */
+export async function getPlaceExtendedInfo(placeId: string): Promise<PlaceExtendedInfo | null> {
+  const fieldMask = [
+    'id',
+    'formattedAddress',
+    'nationalPhoneNumber',
+    'internationalPhoneNumber',
+    'websiteUri',
+    'googleMapsUri',
+    'currentOpeningHours',
+    'regularOpeningHours',
+  ].join(',');
+
+  try {
+    const res = await fetch(`${V1_BASE}/places/${placeId}`, {
+      headers: v1Headers(fieldMask),
+    });
+    const json = await res.json();
+    if (json.error) {
+      console.warn('getPlaceExtendedInfo error:', json.error.message);
+      return null;
+    }
+
+    const hours =
+      json.currentOpeningHours?.weekdayDescriptions ??
+      json.regularOpeningHours?.weekdayDescriptions ??
+      [];
+
+    return {
+      address: json.formattedAddress || undefined,
+      phone: json.internationalPhoneNumber || json.nationalPhoneNumber || undefined,
+      website: json.websiteUri || undefined,
+      mapsUrl: json.googleMapsUri || undefined,
+      hours: hours.length > 0 ? hours : undefined,
+    };
+  } catch (e) {
+    console.error('getPlaceExtendedInfo error', e);
+    return null;
+  }
 }
 
 /** Extract a neighborhood or short city label from a place's secondary text */

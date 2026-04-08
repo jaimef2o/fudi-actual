@@ -10,13 +10,15 @@ import {
   Modal,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import { router } from 'expo-router';
 import { showAlert } from '../lib/utils/alerts';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
-import { useProfile, useUpdateProfile } from '../lib/hooks/useProfile';
+import { useQueryClient } from '@tanstack/react-query';
+import { useProfile, useUpdateProfile, useFollowRequests } from '../lib/hooks/useProfile';
 import { supabase } from '../lib/supabase';
 import { searchCities, type PlaceCandidate } from '../lib/api/places';
 
@@ -256,6 +258,7 @@ function CityModal({
 
 // ── MAIN SCREEN ───────────────────────────────────────────────────────────────
 export default function SettingsScreen() {
+  const queryClient = useQueryClient();
   const currentUser = useAppStore((s) => s.currentUser);
   const { data: profile, isLoading } = useProfile(currentUser?.id);
   const { mutateAsync: updateProfile, isPending: saving } = useUpdateProfile(currentUser?.id ?? '');
@@ -267,6 +270,27 @@ export default function SettingsScreen() {
 
   // Local prefs (stored client-side for MVP — no extra DB column needed)
   const [defaultVisibility, setDefaultVisibility] = useState<'friends' | 'private'>('friends');
+
+  // Privacy: is_public toggle
+  const isPublic = (profile as any)?.is_public ?? true;
+  const [togglingPrivacy, setTogglingPrivacy] = useState(false);
+
+  // Follow requests count (for badge)
+  const { data: followRequests = [] } = useFollowRequests(currentUser?.id);
+  const pendingCount = followRequests.length;
+
+  async function handleTogglePrivacy(value: boolean) {
+    if (!currentUser?.id) return;
+    setTogglingPrivacy(true);
+    try {
+      await supabase.from('users').update({ is_public: value }).eq('id', currentUser.id);
+      queryClient.invalidateQueries({ queryKey: ['profile', currentUser.id] });
+    } catch {
+      showAlert('Error', 'No se pudo cambiar la privacidad.');
+    } finally {
+      setTogglingPrivacy(false);
+    }
+  }
 
   // Email from Supabase auth (not from users table)
   const [authEmail, setAuthEmail] = useState<string>('');
@@ -329,7 +353,7 @@ export default function SettingsScreen() {
           text: 'Eliminar cuenta',
           style: 'destructive',
           onPress: () => {
-            showAlert('Próximamente', 'Para eliminar tu cuenta, escríbenos a hola@fudi.app y lo gestionamos de inmediato.');
+            showAlert('Próximamente', 'Para eliminar tu cuenta, escríbenos a hola@savry.app y lo gestionamos de inmediato.');
           },
         },
       ]
@@ -396,6 +420,53 @@ export default function SettingsScreen() {
               />
             </View>
 
+            {/* ── PRIVACIDAD ── */}
+            <SectionHeader label="PRIVACIDAD" />
+            <View style={styles.card}>
+              {/* Account privacy toggle */}
+              <View style={styles.row}>
+                <View style={styles.rowIcon}>
+                  <MaterialIcons name={isPublic ? 'lock-open' : 'lock'} size={18} color="#424844" />
+                </View>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={styles.rowLabel}>Cuenta privada</Text>
+                  <Text style={styles.rowValue}>
+                    {isPublic
+                      ? 'Cualquiera puede seguirte'
+                      : 'Apruebas quién te sigue'}
+                  </Text>
+                </View>
+                {togglingPrivacy ? (
+                  <ActivityIndicator size="small" color="#032417" />
+                ) : (
+                  <Switch
+                    value={!isPublic}
+                    onValueChange={(val) => handleTogglePrivacy(!val)}
+                    trackColor={{ false: '#e6e2db', true: '#c7ef48' }}
+                    thumbColor="#ffffff"
+                  />
+                )}
+              </View>
+              <View style={styles.rowDivider} />
+              {/* Follow requests */}
+              <SettingsRow
+                icon="person-add"
+                label="Solicitudes de seguimiento"
+                value={pendingCount > 0 ? `${pendingCount} pendiente${pendingCount > 1 ? 's' : ''}` : 'Ninguna'}
+                onPress={() => router.push('/follow-requests')}
+                rightComponent={
+                  pendingCount > 0 ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <View style={styles.badge}>
+                        <Text style={styles.badgeText}>{pendingCount}</Text>
+                      </View>
+                      <MaterialIcons name="chevron-right" size={20} color="#c1c8c2" />
+                    </View>
+                  ) : undefined
+                }
+              />
+            </View>
+
             {/* ── PREFERENCIAS ── */}
             <SectionHeader label="PREFERENCIAS" />
             <View style={styles.card}>
@@ -435,20 +506,20 @@ export default function SettingsScreen() {
               <SettingsRow
                 icon="mail-outline"
                 label="Contactar con el equipo"
-                value="hola@fudi.app"
-                onPress={() => Linking.openURL('mailto:hola@fudi.app?subject=fudi%20feedback')}
+                value="hola@savry.app"
+                onPress={() => Linking.openURL('mailto:hola@savry.app?subject=savry%20feedback')}
               />
               <View style={styles.rowDivider} />
               <SettingsRow
                 icon="policy"
                 label="Política de privacidad"
-                onPress={() => Linking.openURL('https://fudi.app/privacy')}
+                onPress={() => Linking.openURL('https://savry.app/privacy')}
               />
               <View style={styles.rowDivider} />
               <SettingsRow
                 icon="description"
                 label="Términos de uso"
-                onPress={() => Linking.openURL('https://fudi.app/terms')}
+                onPress={() => Linking.openURL('https://savry.app/terms')}
               />
             </View>
 
@@ -622,6 +693,22 @@ const styles = StyleSheet.create({
   },
   visibilityChipTextActive: {
     color: '#546b00',
+  },
+
+  // Badge (follow requests count)
+  badge: {
+    backgroundColor: '#ba1a1a',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    paddingHorizontal: 6,
+  },
+  badgeText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 11,
+    color: '#ffffff',
   },
 
   // Edit modal
