@@ -27,11 +27,12 @@ import { extractPriceLabel } from '../../lib/api/places';
 import { useQueryClient } from '@tanstack/react-query';
 import { StaggerItem, ScoreReveal } from '../../components/Animations';
 import { COLORS } from '../../lib/theme/colors';
+import { scorePalette } from '../../lib/sentimentColors';
 
 // ── DATA ────────────────────────────────────────────────────────────────────
 
 const SORT_OPTIONS_HISTORICO = ['Mejor valorado', 'Más reciente', 'Nombre A-Z'];
-const SORT_OPTIONS_GUARDADOS = ['Recientes', 'Amigos', 'Global', 'A-Z'];
+const SORT_OPTIONS_GUARDADOS = ['Recientes', 'Valoración (amigos)', 'Valoración (global)', 'A-Z'];
 
 // ── CIRCULAR SCORE ───────────────────────────────────────────────────────────
 
@@ -191,8 +192,8 @@ export default function ListasScreen() {
     })
     .sort((a: any, b: any) => {
       if (activeSort === 'A-Z') return a.name.localeCompare(b.name);
-      if (activeSort === 'Amigos') return (b.friendAvgScore ?? 0) - (a.friendAvgScore ?? 0);
-      if (activeSort === 'Global') return (b.globalAvgScore ?? 0) - (a.globalAvgScore ?? 0);
+      if (activeSort === 'Valoración (amigos)') return (b.friendAvgScore ?? 0) - (a.friendAvgScore ?? 0);
+      if (activeSort === 'Valoración (global)') return (b.globalAvgScore ?? 0) - (a.globalAvgScore ?? 0);
       return 0; // Recientes — keep original order (most recently saved first)
     });
 
@@ -587,18 +588,24 @@ export default function ListasScreen() {
                       ) : null}
                       {/* Scores row */}
                       <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-                        {item.friendAvgScore != null && (
-                          <View style={styles.savedScorePill}>
-                            <MaterialIcons name="people" size={11} color={COLORS.onSecondaryContainer} />
-                            <Text style={styles.savedScoreText}>{item.friendAvgScore.toFixed(1)}</Text>
-                          </View>
-                        )}
-                        {item.globalAvgScore != null && (
-                          <View style={[styles.savedScorePill, styles.savedScorePillGlobal]}>
-                            <MaterialIcons name="public" size={11} color={COLORS.outline} />
-                            <Text style={[styles.savedScoreText, styles.savedScoreTextGlobal]}>{item.globalAvgScore.toFixed(1)}</Text>
-                          </View>
-                        )}
+                        {item.friendAvgScore != null && (() => {
+                          const pal = scorePalette(item.friendAvgScore);
+                          return (
+                            <View style={[styles.savedScorePill, { backgroundColor: pal.tint }]}>
+                              <MaterialIcons name="people" size={11} color={pal.badgeText} />
+                              <Text style={[styles.savedScoreText, { color: pal.badgeText }]}>{item.friendAvgScore.toFixed(1)}</Text>
+                            </View>
+                          );
+                        })()}
+                        {item.globalAvgScore != null && (() => {
+                          const pal = scorePalette(item.globalAvgScore);
+                          return (
+                            <View style={[styles.savedScorePill, { backgroundColor: pal.tint }]}>
+                              <MaterialIcons name="public" size={11} color={pal.badgeText} />
+                              <Text style={[styles.savedScoreText, { color: pal.badgeText }]}>{item.globalAvgScore.toFixed(1)}</Text>
+                            </View>
+                          );
+                        })()}
                         {item.friendAvgScore == null && item.globalAvgScore == null && (
                           <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 11, color: COLORS.outlineVariant }}>Sin valoraciones</Text>
                         )}
@@ -1060,21 +1067,15 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 999,
   },
-  savedScorePillGlobal: {
-    backgroundColor: COLORS.surfaceContainerHigh,
-  },
   savedScoreText: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 12,
     color: COLORS.onSecondaryContainer,
   },
-  savedScoreTextGlobal: {
-    color: COLORS.onSurfaceVariant,
-  },
   savedDate: {
     fontFamily: 'Manrope-Regular',
     fontSize: 10,
-    color: '#727973',
+    color: COLORS.outline,
   },
   emptyState: {
     alignItems: 'center',

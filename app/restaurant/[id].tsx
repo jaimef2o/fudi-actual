@@ -413,17 +413,19 @@ export default function RestaurantScreen() {
 
             {/* Bottom: Guardados — spans full width */}
             <View style={s.bentoCellWide}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, marginRight: 16, overflow: 'hidden' }}>
-                <MaterialIcons name="bookmark" size={18} color={COLORS.primary} />
-                {friendSavedCount > 0 ? (
-                  <>
+              <View style={{ flex: 1, marginRight: 16 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <MaterialIcons name="bookmark" size={16} color={COLORS.primary} />
+                  {friendSavedCount > 0 ? (
                     <Text style={s.bentoCellLabel} numberOfLines={1}>Guardado por</Text>
-                    <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 18, color: COLORS.primary }} numberOfLines={1}>
-                      {friendSavedCount} {friendSavedCount === 1 ? 'amigo' : 'amigos'}
-                    </Text>
-                  </>
-                ) : (
-                  <Text style={[s.bentoCellLabel, { fontSize: 11 }]} numberOfLines={1}>Ningún amigo lo ha guardado aún</Text>
+                  ) : (
+                    <Text style={[s.bentoCellLabel, { fontSize: 11 }]} numberOfLines={1}>Ningún amigo lo ha guardado</Text>
+                  )}
+                </View>
+                {friendSavedCount > 0 && (
+                  <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 20, color: COLORS.primary, marginTop: 2 }} numberOfLines={1}>
+                    {friendSavedCount} {friendSavedCount === 1 ? 'amigo' : 'amigos'}
+                  </Text>
                 )}
               </View>
               <TouchableOpacity
@@ -849,14 +851,15 @@ const s = StyleSheet.create({
     marginTop: 2,
   },
   saveBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
     gap: 6,
     backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     flexShrink: 0,
+    minHeight: 44,
   },
   saveBtnActive: {
     backgroundColor: COLORS.secondaryContainer,

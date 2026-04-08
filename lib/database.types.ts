@@ -184,6 +184,60 @@ export type Database = {
           },
         ]
       }
+      notifications: {
+        Row: {
+          id: string
+          user_id: string
+          type: 'follow_request' | 'new_follower' | 'new_visit' | 'tagged' | 'comment' | 'follow_accepted' | 'post_saved'
+          title: string
+          body: string
+          actor_id: string | null
+          visit_id: string | null
+          restaurant_id: string | null
+          read_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          type: 'follow_request' | 'new_follower' | 'new_visit' | 'tagged' | 'comment' | 'follow_accepted' | 'post_saved'
+          title: string
+          body: string
+          actor_id?: string | null
+          visit_id?: string | null
+          restaurant_id?: string | null
+          read_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          type?: 'follow_request' | 'new_follower' | 'new_visit' | 'tagged' | 'comment' | 'follow_accepted' | 'post_saved'
+          title?: string
+          body?: string
+          actor_id?: string | null
+          visit_id?: string | null
+          restaurant_id?: string | null
+          read_at?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       saved_visits: {
         Row: {
           id: string

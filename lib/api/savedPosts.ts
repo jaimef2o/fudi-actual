@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { createNotification } from './notifications';
 
 type SavedVisitRow = {
   visit_id: string;
@@ -31,6 +32,33 @@ export async function savePost(userId: string, visitId: string): Promise<void> {
     .insert({ user_id: userId, visit_id: visitId });
   // Code '23505' = unique_violation (post already saved) — safe to ignore
   if (error && error.code !== '23505') throw error;
+
+  // Notify the visit owner (fire-and-forget)
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('visits')
+        .select('user_id, restaurant:restaurants!restaurant_id(name)')
+        .eq('id', visitId)
+        .single();
+      if (!data || data.user_id === userId) return;
+      const restName = (data.restaurant as any)?.name ?? 'un restaurante';
+      const { data: saver } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', userId)
+        .single();
+      const saverName = saver?.name ?? 'Alguien';
+      await createNotification({
+        userId: data.user_id,
+        type: 'post_saved',
+        title: 'Publicación guardada',
+        body: `${saverName} ha guardado tu visita a ${restName}`,
+        actorId: userId,
+        visitId,
+      });
+    } catch {}
+  })();
 }
 
 export async function unsavePost(userId: string, visitId: string): Promise<void> {
@@ -74,4 +102,18 @@ export async function isPostSaved(userId: string, visitId: string): Promise<bool
     .eq('visit_id', visitId)
     .maybeSingle();
   return !!data;
+}
+
+/**
+ * Count how many users have saved a specific visit.
+ * Only the visit owner should see this — privacy controlled at the UI level.
+ */
+export async function getVisitSaveCount(visitId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('saved_visits')
+    .select('id', { count: 'exact', head: true })
+    .eq('visit_id', visitId);
+
+  if (error) return 0;
+  return count ?? 0;
 }

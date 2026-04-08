@@ -19,7 +19,7 @@ import { showAlert } from '../../lib/utils/alerts';
 import { COLORS } from '../../lib/theme/colors';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { useVisit, useBookmark, useSavePost, useDeleteVisit, useSavedRestaurants } from '../../lib/hooks/useVisit';
+import { useVisit, useBookmark, useSavePost, useDeleteVisit, useSavedRestaurants, useVisitSaveCount } from '../../lib/hooks/useVisit';
 import { useVisitDishes } from '../../lib/hooks/useDishes';
 import { useAppStore } from '../../store';
 import { scorePalette } from '../../lib/sentimentColors';
@@ -77,6 +77,7 @@ export default function VisitScreen() {
   const { mutateAsync: deleteVisit, isPending: isDeleting } = useDeleteVisit();
 
   const isOwnPost = !!currentUser?.id && (visit as any)?.user_id === currentUser.id;
+  const { data: saveCount = 0 } = useVisitSaveCount(id, isOwnPost);
 
   // Stable refs for FlatList viewability (must not be recreated on re-render)
   const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
@@ -385,6 +386,16 @@ export default function VisitScreen() {
             })()}
           </View>
 
+          {/* Save count — only visible to post owner */}
+          {isOwnPost && saveCount > 0 && (
+            <View style={styles.saveCountRow}>
+              <MaterialIcons name="bookmark" size={16} color={COLORS.outline} />
+              <Text style={styles.saveCountText}>
+                {saveCount} {saveCount === 1 ? 'persona ha' : 'personas han'} guardado esta publicación
+              </Text>
+            </View>
+          )}
+
           {/* Restaurant link */}
           <TouchableOpacity
             style={styles.restaurantLink}
@@ -690,6 +701,22 @@ const styles = StyleSheet.create({
     fontSize: 9,
     letterSpacing: 1,
     textTransform: 'uppercase',
+  },
+  saveCountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: COLORS.surfaceContainerLow,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  saveCountText: {
+    fontFamily: 'Manrope-SemiBold',
+    fontSize: 12,
+    color: COLORS.outline,
   },
   restaurantLink: {
     flexDirection: 'row',

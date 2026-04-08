@@ -16,7 +16,7 @@ import {
   UpdateVisitInput,
   UpdateVisitFullInput,
 } from '../api/visits';
-import { savePost, unsavePost, getSavedPosts } from '../api/savedPosts';
+import { savePost, unsavePost, getSavedPosts, getVisitSaveCount } from '../api/savedPosts';
 
 export function useVisit(visitId: string | undefined) {
   return useQuery({
@@ -204,6 +204,18 @@ export function useSavedPosts(userId: string | undefined) {
     enabled: !!userId,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
+  });
+}
+
+/**
+ * How many users saved this visit — only shown to the visit owner.
+ */
+export function useVisitSaveCount(visitId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['visitSaveCount', visitId],
+    queryFn: () => getVisitSaveCount(visitId!),
+    enabled: !!visitId && enabled,
+    staleTime: 60_000,
   });
 }
 

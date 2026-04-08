@@ -21,6 +21,7 @@ import { useAppStore } from '../../store';
 import { COLORS } from '../../lib/theme/colors';
 import { useFeed, useUserFeed, useForYouFeed } from '../../lib/hooks/useFeed';
 import { useFollowRequests, useNewFollowers, useFollowUser, useRejectFollowRequest } from '../../lib/hooks/useProfile';
+import { useUnreadCount } from '../../lib/hooks/useNotifications';
 import { supabase } from '../../lib/supabase';
 import { useShimmer, FeedCardSkeleton } from '../../components/SkeletonLoader';
 import { FeedCard } from '../../components/cards/FeedCard';
@@ -227,7 +228,8 @@ export default function FeedScreen() {
   const { data: newFollowersData } = useNewFollowers(currentUser?.id);
   const pendingRequestors = (followRequests ?? []).map((r: any) => r.requester).filter(Boolean);
   const newFollowersList = (newFollowersData ?? []).map((r: any) => r.requester).filter(Boolean);
-  const totalNotifCount = pendingRequestors.length + newFollowersList.length;
+  const { data: dbUnreadCount = 0 } = useUnreadCount(currentUser?.id);
+  const totalNotifCount = pendingRequestors.length + newFollowersList.length + dbUnreadCount;
   // Tab toggle: "Para ti" (algorithmic) vs "Solo amigos" (friends chronological)
   const [onlyMutual, setOnlyMutual] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);

@@ -7,6 +7,7 @@
  */
 
 import { supabase } from '../supabase';
+import { createNotification } from './notifications';
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
@@ -86,13 +87,26 @@ export async function notifyNewVisit(
   if (tokens.size === 0) return;
 
   const scoreText = score != null ? ` — ${score.toFixed(1)}` : '';
+  const bodyText = `${userName} acaba de visitar ${restaurantName}${scoreText}`;
   const messages: PushMessage[] = [...tokens.values()].map((token) => ({
     to: token,
     title: 'Nueva visita',
-    body: `${userName} acaba de visitar ${restaurantName}${scoreText}`,
+    body: bodyText,
     data: { visitId, type: 'new_visit' },
     sound: 'default',
   }));
+
+  // Persist to DB for each mutual friend
+  await Promise.all(mutualIds.map((friendId) =>
+    createNotification({
+      userId: friendId,
+      type: 'new_visit',
+      title: 'Nueva visita',
+      body: bodyText,
+      actorId: userId,
+      visitId,
+    }).catch(() => {})
+  ));
 
   await sendPush(messages);
 }
@@ -112,13 +126,25 @@ export async function notifyTaggedInVisit(
   const tokens = await getTokens(taggedUserIds);
   if (tokens.size === 0) return;
 
+  const bodyText = `${taggerName} te etiquetó en su visita a ${restaurantName}`;
   const messages: PushMessage[] = [...tokens.entries()].map(([_, token]) => ({
     to: token,
     title: 'Te han etiquetado',
-    body: `${taggerName} te etiquetó en su visita a ${restaurantName}`,
+    body: bodyText,
     data: { visitId, type: 'tagged' },
     sound: 'default',
   }));
+
+  // Persist to DB
+  await Promise.all(taggedUserIds.map((uid) =>
+    createNotification({
+      userId: uid,
+      type: 'tagged',
+      title: 'Te han etiquetado',
+      body: bodyText,
+      visitId,
+    }).catch(() => {})
+  ));
 
   await sendPush(messages);
 }
@@ -144,6 +170,14 @@ export async function notifyNewFollower(
     ? `${followerName} quiere seguirte en savry`
     : `${followerName} te ha empezado a seguir`;
 
+  // Persist to DB
+  await createNotification({
+    userId: targetUserId,
+    type: isPending ? 'follow_request' : 'new_follower',
+    title,
+    body,
+  }).catch(() => {});
+
   await sendPush([{
     to: token,
     title,
@@ -168,10 +202,21 @@ export async function notifyNewComment(
   const token = tokens.get(visitOwnerId);
   if (!token) return;
 
+  const bodyText = `${commenterName} comentó en tu visita a ${restaurantName}`;
+
+  // Persist to DB
+  await createNotification({
+    userId: visitOwnerId,
+    type: 'comment',
+    title: 'Nuevo comentario',
+    body: bodyText,
+    visitId,
+  }).catch(() => {});
+
   await sendPush([{
     to: token,
     title: 'Nuevo comentario',
-    body: `${commenterName} comentó en tu visita a ${restaurantName}`,
+    body: bodyText,
     data: { visitId, type: 'comment' },
     sound: 'default',
   }]);

@@ -419,7 +419,8 @@ export async function getFriendStats(
     supabase
       .from('list_items')
       .select('lists!inner(user_id)')
-      .in('restaurant_id', restaurantIds),
+      .in('restaurant_id', restaurantIds)
+      .in('lists.user_id', friendIds),
   ]);
 
   const scores = (visits ?? [])
@@ -429,11 +430,14 @@ export async function getFriendStats(
     ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
     : null;
 
+  // Deduplicate by user_id — a friend saving to multiple lists counts as 1
   type SavedItemRow = { lists: { user_id: string } | null };
-  const friendSet = new Set(friendIds);
-  const friendSavedCount = ((savedItems ?? []) as unknown as SavedItemRow[]).filter((item) =>
-    friendSet.has(item.lists?.user_id ?? '')
-  ).length;
+  const uniqueFriendSavers = new Set<string>();
+  for (const item of (savedItems ?? []) as unknown as SavedItemRow[]) {
+    const uid = item.lists?.user_id;
+    if (uid) uniqueFriendSavers.add(uid);
+  }
+  const friendSavedCount = uniqueFriendSavers.size;
 
   return { friendScore, friendVisitCount: scores.length, friendSavedCount };
 }
