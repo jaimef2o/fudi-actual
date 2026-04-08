@@ -281,8 +281,9 @@ export default function DescubrirScreen() {
                         <View style={{
                           backgroundColor: COLORS.surfaceContainerLowest,
                           borderRadius: 16,
-                          padding: 12,
-                          maxWidth: 220,
+                          padding: 14,
+                          minWidth: 200,
+                          maxWidth: 280,
                           shadowColor: COLORS.onSurface,
                           shadowOffset: { width: 0, height: 4 },
                           shadowOpacity: 0.12,
@@ -306,7 +307,7 @@ export default function DescubrirScreen() {
                               {pin.neighborhood}{pin.cuisine ? ` · ${pin.cuisine}` : ''}
                             </Text>
                           ) : null}
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
                             <View style={{
                               backgroundColor: pal.badgeBg,
                               paddingHorizontal: 8,
