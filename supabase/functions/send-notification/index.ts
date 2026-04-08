@@ -2,7 +2,7 @@
  * Supabase Edge Function: send-notification
  *
  * Called via Supabase Database Webhooks when specific events happen:
- *   • New follow (relationships INSERT)  → "X quiere seguirte en fudi"
+ *   • New follow (relationships INSERT)  → "X quiere seguirte en savry"
  *   • New visit (visits INSERT)          → notify mutual friends
  *   • Visit tag (visit_tags INSERT)      → "X te etiquetó en su visita a Y"
  *

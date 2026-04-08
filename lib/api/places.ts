@@ -23,8 +23,8 @@ const PRICE_LEVEL_MAP: Record<string, number> = {
   PRICE_LEVEL_VERY_EXPENSIVE: 4,
 };
 
-// ─── Cuisine mapping (Google Places types → Fudi display label) ──────────────
-const GOOGLE_TO_FUDI_CUISINE: Record<string, string> = {
+// ─── Cuisine mapping (Google Places types → Savry display label) ──────────────
+const GOOGLE_TO_SAVRY_CUISINE: Record<string, string> = {
   spanish_restaurant:         'Española & Tapas',
   italian_restaurant:         'Italiana & Pizza',
   pizza_restaurant:           'Italiana & Pizza',
@@ -57,12 +57,12 @@ const GOOGLE_TO_FUDI_CUISINE: Record<string, string> = {
 };
 
 /**
- * Maps a Google Places `types` array to a Fudi cuisine label.
+ * Maps a Google Places `types` array to a Savry cuisine label.
  * Returns null if no known type matches (≈60% of restaurants in Spain).
  */
 export function extractCuisineType(types: string[]): string | null {
   for (const t of types) {
-    if (GOOGLE_TO_FUDI_CUISINE[t]) return GOOGLE_TO_FUDI_CUISINE[t];
+    if (GOOGLE_TO_SAVRY_CUISINE[t]) return GOOGLE_TO_SAVRY_CUISINE[t];
   }
   return null;
 }

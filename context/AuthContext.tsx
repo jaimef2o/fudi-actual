@@ -34,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .single();
 
     if (error) {
-      console.error('[fudi auth] Failed to fetch profile:', error.message);
+      console.error('[savry auth] Failed to fetch profile:', error.message);
       setProfile(null);
       return;
     }

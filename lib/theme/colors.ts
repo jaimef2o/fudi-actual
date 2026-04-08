@@ -1,5 +1,5 @@
 /**
- * fudi Design System — Color Tokens
+ * savry Design System — Color Tokens
  * Single source of truth for all colors in the app.
  * Import from here instead of using hardcoded hex values.
  */

@@ -1,5 +1,5 @@
 /**
- * Push notification helpers for fudi.
+ * Push notification helpers for savry.
  *
  * Install required packages:
  *   npx expo install expo-notifications expo-device

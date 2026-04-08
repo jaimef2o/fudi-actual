@@ -32,7 +32,7 @@ export function initMonitoring() {
  */
 export function captureError(error: unknown, context?: Record<string, unknown>) {
   if (!Sentry) {
-    console.error('[fudi error]', error, context);
+    console.error('[savry error]', error, context);
     return;
   }
   Sentry.withScope((scope) => {

@@ -306,7 +306,7 @@ export default function RestaurantScreen() {
               } catch (err: unknown) {
                 setPendingFav(!next);
                 const msg = err instanceof Error ? err.message : String(err);
-                if (__DEV__) console.error('[fudi:bookmark] toggle failed:', msg);
+                if (__DEV__) console.error('[savry:bookmark] toggle failed:', msg);
                 showToast(`Error: ${msg.slice(0, 80)}`);
               } finally {
                 setPendingFav(null);

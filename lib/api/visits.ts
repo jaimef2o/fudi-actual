@@ -284,7 +284,7 @@ export async function recomputeRankPositions(userId: string): Promise<void> {
   const results = await Promise.allSettled(writes);
   const failures = results.filter(r => r.status === 'rejected');
   if (failures.length > 0) {
-    console.error(`[fudi] ${failures.length} ranking updates failed`);
+    console.error(`[savry] ${failures.length} ranking updates failed`);
   }
 }
 
@@ -636,7 +636,7 @@ async function getOrCreateWantList(userId: string): Promise<string> {
     .limit(1)
     .maybeSingle();
 
-  if (fetchError) console.error('[fudi:bookmark] SELECT lists error:', fetchError);
+  if (fetchError) console.error('[savry:bookmark] SELECT lists error:', fetchError);
   if (existing?.id) return existing.id;
 
   // Create the default want list — handle race condition where another
@@ -648,7 +648,7 @@ async function getOrCreateWantList(userId: string): Promise<string> {
     .single();
 
   if (error) {
-    console.error('[fudi:bookmark] INSERT lists error:', error.code, error.message);
+    console.error('[savry:bookmark] INSERT lists error:', error.code, error.message);
     // If duplicate (unique constraint), fetch the existing one
     if (error.code === '23505') {
       const { data: retry } = await supabase
@@ -672,13 +672,13 @@ export async function bookmarkRestaurant(userId: string, restaurantId: string) {
     .delete()
     .eq('list_id', listId)
     .eq('restaurant_id', restaurantId);
-  if (delError) console.warn('[fudi:bookmark] DELETE list_items warning:', delError);
+  if (delError) console.warn('[savry:bookmark] DELETE list_items warning:', delError);
 
   const { error } = await supabase
     .from('list_items')
     .insert({ list_id: listId, restaurant_id: restaurantId });
   if (error) {
-    console.error('[fudi:bookmark] INSERT list_items error:', error.code, error.message);
+    console.error('[savry:bookmark] INSERT list_items error:', error.code, error.message);
     throw new Error(`[list_items] ${error.code}: ${error.message}`);
   }
 }
