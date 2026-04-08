@@ -30,7 +30,7 @@ export type CreateVisitInput = {
 };
 
 export type VisitDetail = VisitRow & {
-  restaurant: { id: string; name: string; chain_name?: string | null; brand_name?: string | null; neighborhood: string | null; city: string | null; cover_image_url: string | null; cuisine: string | null; price_level: string | null };
+  restaurant: { id: string; name: string; chain_name?: string | null; brand_name?: string | null; neighborhood: string | null; city: string | null; cover_image_url: string | null; cuisine: string | null; price_level: string | null; lat?: string | null; lng?: string | null };
   user: { id: string; name: string; avatar_url: string | null };
   dishes: (VisitDishRow & { photos: VisitPhotoRow[] })[];
   photos: VisitPhotoRow[];
@@ -64,7 +64,7 @@ export async function getUserRanking(userId: string): Promise<VisitDetail[]> {
     .from('visits')
     .select(`
       *,
-      restaurant:restaurants!restaurant_id (id, name, chain_name, brand_name, neighborhood, city, cuisine, price_level, cover_image_url),
+      restaurant:restaurants!restaurant_id (id, name, chain_name, brand_name, neighborhood, city, cuisine, price_level, cover_image_url, lat, lng),
       user:users!user_id (id, name, avatar_url),
       photos:visit_photos!visit_id (*),
       tags:visit_tags (tagged_user:users!tagged_user_id (id, name, avatar_url))

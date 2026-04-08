@@ -328,6 +328,19 @@ export default function ProfileScreen() {
             )}
           </View>
 
+          {/* Map button */}
+          {realRanking.length > 0 && (
+            <TouchableOpacity
+              style={styles.mapBtn}
+              activeOpacity={0.85}
+              onPress={() => router.push(`/profile/map?userId=${profileUserId}` as any)}
+            >
+              <MaterialIcons name="map" size={18} color={COLORS.onSecondaryContainer} />
+              <Text style={styles.mapBtnText}>Ver en mapa</Text>
+              <MaterialIcons name="arrow-forward" size={16} color={COLORS.onSecondaryContainer} />
+            </TouchableOpacity>
+          )}
+
           {/* Stats */}
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
@@ -692,6 +705,26 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope-Bold',
     fontSize: 11,
     color: COLORS.primary,
+  },
+
+  // Map button
+  mapBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: COLORS.secondaryContainer,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginHorizontal: 24,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  mapBtnText: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 14,
+    color: COLORS.onSecondaryContainer,
   },
 
   // Buttons

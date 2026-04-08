@@ -277,6 +277,7 @@ export default function RootLayout() {
         <Stack.Screen name="select-restaurant" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="edit-visit/[id]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="profile/edit" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="profile/map" options={{ headerShown: false, presentation: 'card' }} />
         <Stack.Screen name="invite/[token]" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
         <Stack.Screen name="saved-posts" options={{ headerShown: false, presentation: 'card' }} />
         <Stack.Screen name="refine-ranking" options={{ headerShown: false, presentation: 'fullScreenModal' }} />
