@@ -61,6 +61,10 @@ export default function ProfileScreen() {
   const isFollowing = relStatus === 'following' || relStatus === 'mutual';
   const isPending = relStatus === 'pending';
 
+  // Privacy gate — Instagram-style private profiles
+  const isPrivate = (realProfile as any)?.is_public === false;
+  const canSeeContent = isOwn || isFollowing || !isPrivate;
+
   // Build display data from real DB data — no mock fallbacks
   const profileName = (realProfile as any)?.name || 'Usuario';
   const profileCity = (realProfile as any)?.city ?? '';
@@ -328,8 +332,8 @@ export default function ProfileScreen() {
             )}
           </View>
 
-          {/* Map button — visible for own profile or if following/mutual */}
-          {realRanking.length > 0 && (isOwn || isFollowing) && (
+          {/* Map button — visible only if content is accessible */}
+          {realRanking.length > 0 && canSeeContent && (
             <TouchableOpacity
               style={styles.mapBtn}
               activeOpacity={0.85}
@@ -344,12 +348,12 @@ export default function ProfileScreen() {
           {/* Stats */}
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{realRanking.length}</Text>
+              <Text style={styles.statValue}>{canSeeContent ? realRanking.length : '—'}</Text>
               <Text style={styles.statLabel}>VISITADOS</Text>
             </View>
             <View style={styles.statDivider} />
             <View style={styles.statItem}>
-              <Text style={styles.statValue}>{avgScore > 0 ? avgScore.toFixed(1) : '—'}</Text>
+              <Text style={styles.statValue}>{canSeeContent && avgScore > 0 ? avgScore.toFixed(1) : '—'}</Text>
               <Text style={styles.statLabel}>MEDIA</Text>
             </View>
             <View style={styles.statDivider} />
@@ -398,7 +402,9 @@ export default function ProfileScreen() {
         </View>
 
         {/* Tab content */}
-        {profileLoading || rankingLoading || feedLoading ? (
+        {!canSeeContent ? (
+          <PrivateProfileGate userName={profileName} isPending={isPending} />
+        ) : profileLoading || rankingLoading || feedLoading ? (
           <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 40 }} />
         ) : activeTab === 'favoritos' ? (
           <FavoritosTab restaurants={topRestaurants} showRankingLink={isOwn} targetUserId={profileUserId} />
@@ -549,6 +555,22 @@ function PublicacionesTab({ posts, isOwn, userName }: { posts: { id: string; ima
         </TouchableOpacity>
         );
       })}
+    </View>
+  );
+}
+
+function PrivateProfileGate({ userName, isPending }: { userName: string; isPending: boolean }) {
+  return (
+    <View style={styles.privateGate}>
+      <View style={styles.privateIconCircle}>
+        <MaterialIcons name="lock" size={32} color={COLORS.outline} />
+      </View>
+      <Text style={styles.privateTitle}>Esta cuenta es privada</Text>
+      <Text style={styles.privateSubtitle}>
+        {isPending
+          ? `Has solicitado seguir a ${userName}. Cuando acepte tu solicitud podrás ver sus publicaciones.`
+          : `Sigue a ${userName} para ver sus fotos, favoritos y mapa de restaurantes.`}
+      </Text>
     </View>
   );
 }
@@ -705,6 +727,36 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope-Bold',
     fontSize: 11,
     color: COLORS.primary,
+  },
+
+  // Private profile gate
+  privateGate: {
+    alignItems: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 40,
+    gap: 10,
+  },
+  privateIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: COLORS.outlineVariant,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  privateTitle: {
+    fontFamily: 'Manrope-Bold',
+    fontSize: 16,
+    color: COLORS.primary,
+  },
+  privateSubtitle: {
+    fontFamily: 'Manrope-Regular',
+    fontSize: 13,
+    color: COLORS.outline,
+    textAlign: 'center',
+    lineHeight: 19,
   },
 
   // Map button

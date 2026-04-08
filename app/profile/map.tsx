@@ -38,8 +38,10 @@ export default function ProfileMapScreen() {
   const { data: profile } = useProfile(targetUserId || undefined);
   const { data: relationship } = useRelationship(currentUser?.id, isOwn ? undefined : targetUserId || undefined);
   const profileName = (profile as any)?.name || 'Usuario';
+  const isPrivate = (profile as any)?.is_public === false;
   const relStatus = (relationship as string) ?? 'none';
-  const hasAccess = isOwn || relStatus === 'following' || relStatus === 'mutual';
+  const isFollowing = relStatus === 'following' || relStatus === 'mutual';
+  const hasAccess = isOwn || isFollowing || !isPrivate;
 
   // Build pins from ranking data (deduplicated visits with restaurant info)
   const mapPins: MapPin[] = useMemo(() => {
