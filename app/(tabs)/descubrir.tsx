@@ -15,7 +15,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useState, useMemo } from 'react';
 import { useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
-import { MapView, Marker, MAPS_AVAILABLE } from '../../lib/maps';
+import { MapView, Marker, Callout, MAPS_AVAILABLE } from '../../lib/maps';
+import { scorePalette } from '../../lib/sentimentColors';
 import * as Haptics from 'expo-haptics';
 import { useAppStore } from '../../store';
 import { COLORS } from '../../lib/theme/colors';
@@ -72,14 +73,68 @@ export default function DescubrirScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showMap, setShowMap] = useState(false);
 
-  // Compute map region from restaurants that have coordinates
+  // Build individual map pins — expand chain restaurants into one pin per location
+  type MapPin = {
+    key: string;
+    lat: number;
+    lng: number;
+    name: string;
+    neighborhood: string | null;
+    cuisine: string | null;
+    score: number | null;
+    visitCount: number;
+    restaurantId: string;
+  };
+
+  const mapPins: MapPin[] = useMemo(() => {
+    const pins: MapPin[] = [];
+    for (const r of restaurants as any[]) {
+      const score = r.score ?? r.avg_score ?? r.friend_avg_score ?? null;
+      const numScore = score != null ? Number(score) : null;
+      const name = getDisplayName(r as any, 'search');
+
+      if (r._chainLocations && r._chainLocations.length > 0) {
+        // Chain: create a pin for EACH location
+        for (const loc of r._chainLocations) {
+          if (!loc.lat || !loc.lng) continue;
+          pins.push({
+            key: `${r.id}-${loc.id}`,
+            lat: Number(loc.lat),
+            lng: Number(loc.lng),
+            name,
+            neighborhood: loc.neighborhood,
+            cuisine: r.cuisine ?? null,
+            score: numScore,
+            visitCount: r.visitCount ?? 0,
+            restaurantId: loc.id,
+          });
+        }
+      } else {
+        // Independent or single-location chain
+        if (!r.lat || !r.lng) continue;
+        pins.push({
+          key: r.id,
+          lat: Number(r.lat),
+          lng: Number(r.lng),
+          name,
+          neighborhood: r.neighborhood ?? null,
+          cuisine: r.cuisine ?? null,
+          score: numScore,
+          visitCount: r.visitCount ?? 0,
+          restaurantId: r.id,
+        });
+      }
+    }
+    return pins;
+  }, [restaurants]);
+
+  // Compute map region from all pins
   const mapRegion = useMemo(() => {
-    const withCoords = (restaurants as any[]).filter((r) => r.lat && r.lng);
-    if (withCoords.length === 0) {
+    if (mapPins.length === 0) {
       return { latitude: 40.4168, longitude: -3.7038, latitudeDelta: 0.08, longitudeDelta: 0.08 };
     }
-    const lats = withCoords.map((r) => Number(r.lat));
-    const lngs = withCoords.map((r) => Number(r.lng));
+    const lats = mapPins.map((p) => p.lat);
+    const lngs = mapPins.map((p) => p.lng);
     const minLat = Math.min(...lats);
     const maxLat = Math.max(...lats);
     const minLng = Math.min(...lngs);
@@ -90,7 +145,7 @@ export default function DescubrirScreen() {
       latitudeDelta: Math.max(0.02, (maxLat - minLat) * 1.4),
       longitudeDelta: Math.max(0.02, (maxLng - minLng) * 1.4),
     };
-  }, [restaurants]);
+  }, [mapPins]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -175,17 +230,111 @@ export default function DescubrirScreen() {
               showsUserLocation
               showsMyLocationButton
             >
-              {(restaurants as any[]).map((r) => {
-                if (!r.lat || !r.lng) return null;
-                const score = r.score ?? r.avg_score ?? r.friend_avg_score;
+              {mapPins.map((pin) => {
+                const pal = scorePalette(pin.score);
+                const displayScore = pin.score != null ? pin.score.toFixed(1) : '—';
                 return (
                   <Marker
-                    key={r.id}
-                    coordinate={{ latitude: Number(r.lat), longitude: Number(r.lng) }}
-                    title={getDisplayName(r as any, 'search')}
-                    description={score ? `${Number(score).toFixed(1)}/10` : undefined}
-                    onCalloutPress={() => router.push(`/restaurant/${r.id}`)}
-                  />
+                    key={pin.key}
+                    coordinate={{ latitude: pin.lat, longitude: pin.lng }}
+                    onPress={() => router.push(`/restaurant/${pin.restaurantId}`)}
+                    tracksViewChanges={false}
+                  >
+                    {/* Custom score pin */}
+                    <View style={{ alignItems: 'center' }}>
+                      <View style={{
+                        backgroundColor: pal.badgeBg,
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                        borderRadius: 12,
+                        shadowColor: COLORS.onSurface,
+                        shadowOffset: { width: 0, height: 2 },
+                        shadowOpacity: 0.2,
+                        shadowRadius: 4,
+                        elevation: 4,
+                        minWidth: 36,
+                        alignItems: 'center',
+                      }}>
+                        <Text style={{
+                          fontFamily: 'NotoSerif-Bold',
+                          fontSize: 13,
+                          color: pal.badgeText,
+                        }}>
+                          {displayScore}
+                        </Text>
+                      </View>
+                      {/* Pin tail */}
+                      <View style={{
+                        width: 0,
+                        height: 0,
+                        borderLeftWidth: 6,
+                        borderRightWidth: 6,
+                        borderTopWidth: 8,
+                        borderLeftColor: 'transparent',
+                        borderRightColor: 'transparent',
+                        borderTopColor: pal.badgeBg,
+                        marginTop: -1,
+                      }} />
+                    </View>
+                    {Callout ? (
+                      <Callout tooltip onPress={() => router.push(`/restaurant/${pin.restaurantId}`)}>
+                        <View style={{
+                          backgroundColor: COLORS.surfaceContainerLowest,
+                          borderRadius: 16,
+                          padding: 12,
+                          maxWidth: 220,
+                          shadowColor: COLORS.onSurface,
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.12,
+                          shadowRadius: 8,
+                          elevation: 4,
+                        }}>
+                          <Text style={{
+                            fontFamily: 'NotoSerif-Bold',
+                            fontSize: 14,
+                            color: COLORS.primary,
+                          }} numberOfLines={1}>
+                            {pin.name}
+                          </Text>
+                          {pin.neighborhood ? (
+                            <Text style={{
+                              fontFamily: 'Manrope-Regular',
+                              fontSize: 11,
+                              color: COLORS.outline,
+                              marginTop: 2,
+                            }}>
+                              {pin.neighborhood}{pin.cuisine ? ` · ${pin.cuisine}` : ''}
+                            </Text>
+                          ) : null}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                            <View style={{
+                              backgroundColor: pal.badgeBg,
+                              paddingHorizontal: 8,
+                              paddingVertical: 2,
+                              borderRadius: 8,
+                            }}>
+                              <Text style={{
+                                fontFamily: 'NotoSerif-Bold',
+                                fontSize: 13,
+                                color: pal.badgeText,
+                              }}>
+                                {displayScore}
+                              </Text>
+                            </View>
+                            {pin.visitCount > 0 ? (
+                              <Text style={{
+                                fontFamily: 'Manrope-Medium',
+                                fontSize: 11,
+                                color: COLORS.outline,
+                              }}>
+                                {pin.visitCount} visita{pin.visitCount !== 1 ? 's' : ''}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      </Callout>
+                    ) : null}
+                  </Marker>
                 );
               })}
             </MapView>

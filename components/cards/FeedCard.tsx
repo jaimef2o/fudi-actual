@@ -190,14 +190,13 @@ export const FeedCard = memo(function FeedCard({ post, currentUserId, showRelati
     }
   }
 
+  const navigateToPost = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    router.push(`/visit/${post.id}`);
+  };
+
   return (
-    <AnimatedCard
-      style={styles.card}
-      onPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-        router.push(`/visit/${post.id}`);
-      }}
-    >
+    <AnimatedCard style={styles.card}>
       {/* Card header */}
       <View style={styles.cardHeader}>
         <TouchableOpacity
@@ -253,7 +252,12 @@ export const FeedCard = memo(function FeedCard({ post, currentUserId, showRelati
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={viewabilityConfig}
             renderItem={({ item: frame }) => (
-              <View style={{ width: SCREEN_WIDTH - 32, aspectRatio: 1 }}>
+              <TouchableOpacity
+                activeOpacity={0.95}
+                onPress={navigateToPost}
+                delayPressIn={150}
+                style={{ width: SCREEN_WIDTH - 32, aspectRatio: 1 }}
+              >
                 <ExpoImage
                   source={{ uri: frame.url }}
                   style={{ width: '100%', height: '100%' }}
@@ -305,7 +309,7 @@ export const FeedCard = memo(function FeedCard({ post, currentUserId, showRelati
                     </>
                   )}
                 </LinearGradient>
-              </View>
+              </TouchableOpacity>
             )}
           />
 
@@ -354,7 +358,7 @@ export const FeedCard = memo(function FeedCard({ post, currentUserId, showRelati
             <MaterialIcons
               name={likeActive ? 'favorite' : 'favorite-border'}
               size={24}
-              color={likeActive ? '#e0314b' : COLORS.onSurface}
+              color={likeActive ? COLORS.error : COLORS.onSurface}
             />
           </Animated.View>
           {likeCount > 0 && (
@@ -381,7 +385,7 @@ export const FeedCard = memo(function FeedCard({ post, currentUserId, showRelati
       {/* Caption + Dishes — tapping anywhere opens the post */}
       <TouchableOpacity
         activeOpacity={0.75}
-        onPress={() => router.push(`/visit/${post.id}`)}
+        onPress={navigateToPost}
       >
         {/* Author note / quote */}
         {!!post.note && (
@@ -685,9 +689,9 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     marginLeft: 12,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: COLORS.surfaceContainer,
     alignItems: 'center',
     justifyContent: 'center',

@@ -118,6 +118,8 @@ export type DiscoverRestaurant = RestaurantRow & {
   score: number;
   visitCount: number;
   trendingScore: number;
+  _locationCount?: number;
+  _chainLocations?: { id: string; lat: number | null; lng: number | null; neighborhood: string | null; address: string | null }[];
 };
 
 export async function getDiscoverRestaurants(
@@ -219,6 +221,7 @@ export async function getDiscoverRestaurants(
   }
 
   // Build enriched list
+  type ChainLocation = { id: string; lat: number | null; lng: number | null; neighborhood: string | null; address: string | null };
   type EnrichedRestaurant = RestaurantRow & {
     score: number;
     visitCount: number;
@@ -226,6 +229,7 @@ export async function getDiscoverRestaurants(
     friendAvatars: { id: string; avatar_url: string | null }[];
     chain_name: string | null;
     _locationCount?: number;
+    _chainLocations?: ChainLocation[];
   };
   const enriched: EnrichedRestaurant[] = (restaurants ?? []).map((r) => ({
     ...(r as RestaurantRow),
@@ -271,8 +275,15 @@ export async function getDiscoverRestaurants(
     best.friendAvatars = allAvatars;
     // Average score across all locations
     best.score = Math.round((group.reduce((s: number, r) => s + r.score * r.visitCount, 0) / best.visitCount) * 10) / 10;
-    // Mark as multi-location chain
+    // Mark as multi-location chain and store all locations for map pins
     best._locationCount = group.length;
+    best._chainLocations = group.map((r) => ({
+      id: r.id,
+      lat: r.lat != null ? Number(r.lat) : null,
+      lng: r.lng != null ? Number(r.lng) : null,
+      neighborhood: r.neighborhood ?? null,
+      address: r.address ?? null,
+    }));
     deduped.push(best);
   }
 

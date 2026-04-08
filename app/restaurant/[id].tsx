@@ -413,17 +413,17 @@ export default function RestaurantScreen() {
 
             {/* Bottom: Guardados — spans full width */}
             <View style={s.bentoCellWide}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                <MaterialIcons name="bookmark" size={18} color="#032417" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, marginRight: 12 }}>
+                <MaterialIcons name="bookmark" size={18} color={COLORS.primary} />
                 {friendSavedCount > 0 ? (
                   <>
                     <Text style={s.bentoCellLabel} numberOfLines={1}>Guardado por</Text>
-                    <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 18, color: '#032417' }} numberOfLines={1}>
+                    <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 18, color: COLORS.primary }} numberOfLines={1}>
                       {friendSavedCount} {friendSavedCount === 1 ? 'amigo' : 'amigos'}
                     </Text>
                   </>
                 ) : (
-                  <Text style={[s.bentoCellLabel, { fontSize: 10 }]} numberOfLines={1}>Ningún amigo lo ha guardado aún</Text>
+                  <Text style={[s.bentoCellLabel, { fontSize: 11 }]} numberOfLines={1}>Ningún amigo lo ha guardado aún</Text>
                 )}
               </View>
               <TouchableOpacity
@@ -451,7 +451,7 @@ export default function RestaurantScreen() {
                 <MaterialIcons
                   name={isFavorited ? 'bookmark' : 'bookmark-border'}
                   size={16}
-                  color={isFavorited ? '#032417' : '#032417'}
+                  color={COLORS.primary}
                 />
                 <Text style={s.saveBtnText}>
                   {isFavorited ? 'Guardado' : 'Guardar'}
@@ -521,8 +521,8 @@ export default function RestaurantScreen() {
                         cachePolicy="memory-disk"
                       />
                     ) : (
-                      <View style={[s.visitAvatar, { backgroundColor: '#e6e2db', alignItems: 'center', justifyContent: 'center' }]}>
-                        <MaterialIcons name="person" size={18} color="#727973" />
+                      <View style={[s.visitAvatar, { backgroundColor: COLORS.surfaceContainerHighest, alignItems: 'center', justifyContent: 'center' }]}>
+                        <MaterialIcons name="person" size={18} color={COLORS.outline} />
                       </View>
                     )}
 
@@ -592,7 +592,7 @@ export default function RestaurantScreen() {
                 onPress={() => setShowAllVisits((prev) => !prev)}
               >
                 <Text style={s.verTodasText}>{showAllVisits ? 'Ver menos' : 'Ver todas'}</Text>
-                <MaterialIcons name={showAllVisits ? 'expand-less' : 'chevron-right'} size={18} color="#032417" />
+                <MaterialIcons name={showAllVisits ? 'expand-less' : 'chevron-right'} size={18} color={COLORS.primary} />
               </TouchableOpacity>
             )}
           </View>
@@ -613,7 +613,7 @@ export default function RestaurantScreen() {
                   activeOpacity={0.8}
                   onPress={() => setLocationPickerOpen(!locationPickerOpen)}
                 >
-                  <MaterialIcons name="store" size={18} color="#032417" />
+                  <MaterialIcons name="store" size={18} color={COLORS.primary} />
                   <View style={{ flex: 1 }}>
                     <Text style={s.locationPickerLabel}>Ubicación</Text>
                     <Text style={s.locationPickerValue} numberOfLines={1}>
@@ -630,7 +630,7 @@ export default function RestaurantScreen() {
                   <MaterialIcons
                     name={locationPickerOpen ? 'expand-less' : 'expand-more'}
                     size={22}
-                    color="#727973"
+                    color={COLORS.outline}
                   />
                 </TouchableOpacity>
 
@@ -638,14 +638,14 @@ export default function RestaurantScreen() {
                   <View style={s.locationDropdown}>
                     {loadingLocations ? (
                       <View style={{ padding: 20, alignItems: 'center' }}>
-                        <ActivityIndicator size="small" color="#032417" />
-                        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 12, color: '#727973', marginTop: 8 }}>
+                        <ActivityIndicator size="small" color={COLORS.primary} />
+                        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 12, color: COLORS.outline, marginTop: 8 }}>
                           Buscando ubicaciones...
                         </Text>
                       </View>
                     ) : chainLocations.length === 0 ? (
                       <View style={{ padding: 16, alignItems: 'center' }}>
-                        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: '#727973' }}>
+                        <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: COLORS.outline }}>
                           No se encontraron ubicaciones
                         </Text>
                       </View>
@@ -676,7 +676,7 @@ export default function RestaurantScreen() {
                                 )}
                               </View>
                               {isSelected && (
-                                <MaterialIcons name="check-circle" size={18} color="#546b00" />
+                                <MaterialIcons name="check-circle" size={18} color={COLORS.onSecondaryContainer} />
                               )}
                             </TouchableOpacity>
                           );
@@ -690,7 +690,7 @@ export default function RestaurantScreen() {
                             <Text style={s.locationShowAllText}>
                               Ver todas ({chainLocations.length})
                             </Text>
-                            <MaterialIcons name="expand-more" size={16} color="#546b00" />
+                            <MaterialIcons name="expand-more" size={16} color={COLORS.onSecondaryContainer} />
                           </TouchableOpacity>
                         )}
                       </>
@@ -710,7 +710,7 @@ export default function RestaurantScreen() {
                 }}
                 activeOpacity={0.7}
               >
-                <MaterialIcons name="location-on" size={20} color="#727973" />
+                <MaterialIcons name="location-on" size={20} color={COLORS.outline} />
                 <View style={{ flex: 1 }}>
                   <Text style={s.infoText}>{placeInfo.address}</Text>
                   <Text style={s.infoAction}>{'Cómo llegar →'}</Text>
@@ -725,7 +725,7 @@ export default function RestaurantScreen() {
                 onPress={() => Linking.openURL(`tel:${placeInfo.phone}`)}
                 activeOpacity={0.7}
               >
-                <MaterialIcons name="phone" size={20} color="#727973" />
+                <MaterialIcons name="phone" size={20} color={COLORS.outline} />
                 <Text style={s.infoText}>{placeInfo.phone}</Text>
               </TouchableOpacity>
             )}
@@ -737,8 +737,8 @@ export default function RestaurantScreen() {
                 onPress={() => Linking.openURL(placeInfo.website!)}
                 activeOpacity={0.7}
               >
-                <MaterialIcons name="language" size={20} color="#727973" />
-                <Text style={[s.infoText, { color: '#546b00' }]} numberOfLines={1}>
+                <MaterialIcons name="language" size={20} color={COLORS.outline} />
+                <Text style={[s.infoText, { color: COLORS.onSecondaryContainer }]} numberOfLines={1}>
                   {placeInfo.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}
                 </Text>
               </TouchableOpacity>
@@ -747,7 +747,7 @@ export default function RestaurantScreen() {
             {/* Hours */}
             {placeInfo?.hours && placeInfo.hours.length > 0 && (
               <View style={s.infoRow}>
-                <MaterialIcons name="schedule" size={20} color="#727973" />
+                <MaterialIcons name="schedule" size={20} color={COLORS.outline} />
                 <View style={{ flex: 1 }}>
                   {placeInfo.hours.map((line, i) => (
                     <Text key={i} style={[s.infoText, { fontSize: 12, lineHeight: 20 }]}>{line}</Text>
@@ -780,10 +780,10 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(193,200,194,0.15)',
   },
-  headerBtn: { padding: 8, borderRadius: 999 },
+  headerBtn: { padding: 10, borderRadius: 999, minWidth: 44, minHeight: 44, alignItems: 'center' as const, justifyContent: 'center' as const },
   headerTitle: {
     fontFamily: 'Manrope-Bold', fontSize: 18,
-    color: '#032417', flex: 1, textAlign: 'center',
+    color: COLORS.primary, flex: 1, textAlign: 'center',
   },
   scroll: { paddingTop: Platform.OS === 'ios' ? 108 : 88 },
 
@@ -796,7 +796,7 @@ const s = StyleSheet.create({
   },
   heroName: {
     fontFamily: 'NotoSerif-Bold', fontSize: 24,
-    color: '#ffffff', lineHeight: 30,
+    color: COLORS.onPrimary, lineHeight: 30,
   },
   heroChips: {
     flexDirection: 'row', flexWrap: 'wrap',
@@ -805,7 +805,7 @@ const s = StyleSheet.create({
 
   // ── Bento Stats ──
   bentoWrapper: {
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     padding: 16,
   },
   bentoGrid: {
@@ -816,14 +816,14 @@ const s = StyleSheet.create({
   bentoCell: {
     flex: 1,
     minWidth: '45%',
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 16,
     padding: 16,
     gap: 4,
   },
   bentoCellWide: {
     width: '100%',
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 16,
     padding: 16,
     flexDirection: 'row',
@@ -833,7 +833,7 @@ const s = StyleSheet.create({
   bentoCellLabel: {
     fontFamily: 'Manrope-Bold',
     fontSize: 11,
-    color: '#727973',
+    color: COLORS.outline,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 4,
@@ -845,25 +845,25 @@ const s = StyleSheet.create({
   bentoCellDetail: {
     fontFamily: 'Manrope-Regular',
     fontSize: 12,
-    color: '#727973',
+    color: COLORS.outline,
     marginTop: 2,
   },
   saveBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
   saveBtnActive: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
   },
   saveBtnText: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 13,
-    color: '#032417',
+    color: COLORS.primary,
   },
 
   // ── Friend Visits ──
@@ -872,7 +872,7 @@ const s = StyleSheet.create({
     paddingTop: 28,
   },
   sectionTitle: {
-    fontFamily: 'NotoSerif-Bold', fontSize: 18, color: '#032417', marginBottom: 16,
+    fontFamily: 'NotoSerif-Bold', fontSize: 18, color: COLORS.primary, marginBottom: 16,
   },
   sortChips: {
     flexDirection: 'row',
@@ -880,21 +880,21 @@ const s = StyleSheet.create({
     marginBottom: 16,
   },
   sortChip: {
-    backgroundColor: '#f1ede6',
+    backgroundColor: COLORS.surfaceContainer,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 7,
   },
   sortChipActive: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
   },
   sortChipText: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 12,
-    color: '#727973',
+    color: COLORS.outline,
   },
   sortChipTextActive: {
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   visitsList: { gap: 0 },
   visitCard: {
@@ -909,16 +909,16 @@ const s = StyleSheet.create({
     borderWidth: 2, borderColor: 'rgba(199,239,72,0.5)',
   },
   visitHandle: {
-    fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417',
+    fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.primary,
   },
   visitLocation: {
-    fontFamily: 'Manrope-Regular', fontSize: 12, color: '#424844',
+    fontFamily: 'Manrope-Regular', fontSize: 12, color: COLORS.onSurfaceVariant,
   },
-  visitTime: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#727973' },
+  visitTime: { fontFamily: 'Manrope-Regular', fontSize: 11, color: COLORS.outline },
   visitNote: {
     fontFamily: 'NotoSerif-Italic',
     fontSize: 13,
-    color: '#424844',
+    color: COLORS.onSurfaceVariant,
     lineHeight: 18,
     marginTop: 2,
   },
@@ -933,9 +933,9 @@ const s = StyleSheet.create({
     flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 2,
   },
   dishChip: {
-    backgroundColor: '#ffffff', borderRadius: 8,
+    backgroundColor: COLORS.surfaceContainerLowest, borderRadius: 8,
     paddingHorizontal: 8, paddingVertical: 3,
-    borderWidth: 1, borderColor: '#f1ede6',
+    borderWidth: 0,
     flexDirection: 'row', alignItems: 'center', gap: 3,
   },
   dishChipHighlighted: {
@@ -943,18 +943,18 @@ const s = StyleSheet.create({
     borderColor: 'rgba(84,107,0,0.25)',
   },
   dishChipStar: {
-    fontFamily: 'Manrope-Bold', fontSize: 10, color: '#516600',
+    fontFamily: 'Manrope-Bold', fontSize: 10, color: COLORS.secondary,
   },
-  dishChipText: { fontFamily: 'Manrope-Regular', fontSize: 11, color: '#424844' },
+  dishChipText: { fontFamily: 'Manrope-Regular', fontSize: 11, color: COLORS.onSurfaceVariant },
   dishChipTextHighlighted: {
-    color: '#516600', fontFamily: 'Manrope-SemiBold',
+    color: COLORS.secondary, fontFamily: 'Manrope-SemiBold',
   },
   dishChipMore: {
-    backgroundColor: '#f1ede6', borderRadius: 8,
+    backgroundColor: COLORS.surfaceContainer, borderRadius: 8,
     paddingHorizontal: 8, paddingVertical: 3,
   },
   dishChipMoreText: {
-    fontFamily: 'Manrope-SemiBold', fontSize: 11, color: '#727973',
+    fontFamily: 'Manrope-SemiBold', fontSize: 11, color: COLORS.outline,
   },
 
   // Ver todas
@@ -963,12 +963,12 @@ const s = StyleSheet.create({
     gap: 4, paddingVertical: 14,
   },
   verTodasText: {
-    fontFamily: 'Manrope-Bold', fontSize: 14, color: '#032417',
+    fontFamily: 'Manrope-Bold', fontSize: 14, color: COLORS.primary,
   },
 
   // ── Info del restaurante ──
   infoSection: {
-    backgroundColor: '#f7f3ec',
+    backgroundColor: COLORS.surfaceContainerLow,
     marginHorizontal: 16,
     borderRadius: 20,
     padding: 20,
@@ -978,7 +978,7 @@ const s = StyleSheet.create({
   infoTitle: {
     fontFamily: 'NotoSerif-Bold',
     fontSize: 18,
-    color: '#032417',
+    color: COLORS.primary,
     marginBottom: 16,
   },
   infoRow: {
@@ -992,13 +992,13 @@ const s = StyleSheet.create({
   infoText: {
     fontFamily: 'Manrope-Regular',
     fontSize: 14,
-    color: '#1c1c18',
+    color: COLORS.onSurface,
     flex: 1,
   },
   infoAction: {
     fontFamily: 'Manrope-Bold',
     fontSize: 12,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
     marginTop: 4,
   },
   // ── Location picker (franchise) ──
@@ -1006,27 +1006,27 @@ const s = StyleSheet.create({
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: 10,
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 14,
     padding: 14,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: 'rgba(193,200,194,0.3)',
   },
   locationPickerLabel: {
     fontFamily: 'Manrope-Medium',
     fontSize: 10,
-    color: '#727973',
+    color: COLORS.outline,
     textTransform: 'uppercase' as const,
     letterSpacing: 0.8,
   },
   locationPickerValue: {
     fontFamily: 'Manrope-Bold',
     fontSize: 14,
-    color: '#032417',
+    color: COLORS.primary,
     marginTop: 1,
   },
   locationPickerBadge: {
-    backgroundColor: '#c7ef48',
+    backgroundColor: COLORS.secondaryContainer,
     borderRadius: 10,
     paddingHorizontal: 7,
     paddingVertical: 2,
@@ -1034,13 +1034,13 @@ const s = StyleSheet.create({
   locationPickerBadgeText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 10,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   locationDropdown: {
     marginTop: 8,
-    backgroundColor: '#ffffff',
+    backgroundColor: COLORS.surfaceContainerLowest,
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: 'rgba(193,200,194,0.3)',
     overflow: 'hidden' as const,
   },
@@ -1059,15 +1059,15 @@ const s = StyleSheet.create({
   locationOptionName: {
     fontFamily: 'Manrope-SemiBold',
     fontSize: 14,
-    color: '#032417',
+    color: COLORS.primary,
   },
   locationOptionNameActive: {
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
   locationOptionMeta: {
     fontFamily: 'Manrope-Regular',
     fontSize: 11,
-    color: '#727973',
+    color: COLORS.outline,
     marginTop: 1,
   },
   locationShowAll: {
@@ -1082,6 +1082,6 @@ const s = StyleSheet.create({
   locationShowAllText: {
     fontFamily: 'Manrope-Bold',
     fontSize: 13,
-    color: '#546b00',
+    color: COLORS.onSecondaryContainer,
   },
 });
