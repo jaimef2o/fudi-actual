@@ -413,7 +413,7 @@ export default function RestaurantScreen() {
 
             {/* Bottom: Guardados — spans full width */}
             <View style={s.bentoCellWide}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, marginRight: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, marginRight: 16, overflow: 'hidden' }}>
                 <MaterialIcons name="bookmark" size={18} color={COLORS.primary} />
                 {friendSavedCount > 0 ? (
                   <>
@@ -856,6 +856,7 @@ const s = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
+    flexShrink: 0,
   },
   saveBtnActive: {
     backgroundColor: COLORS.secondaryContainer,
