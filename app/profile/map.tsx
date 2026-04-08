@@ -12,7 +12,7 @@ import { useMemo } from 'react';
 import { MapView, Marker, Callout, MAPS_AVAILABLE } from '../../lib/maps';
 import { scorePalette } from '../../lib/sentimentColors';
 import { useUserRanking } from '../../lib/hooks/useVisit';
-import { useProfile } from '../../lib/hooks/useProfile';
+import { useProfile, useRelationship } from '../../lib/hooks/useProfile';
 import { useAppStore } from '../../store';
 import { getDisplayName } from '../../lib/utils/restaurantName';
 import { COLORS } from '../../lib/theme/colors';
@@ -33,10 +33,13 @@ export default function ProfileMapScreen() {
   const currentUser = useAppStore((s) => s.currentUser);
   const targetUserId = (!userId || userId === 'me') ? currentUser?.id : userId;
 
+  const isOwn = targetUserId === currentUser?.id;
   const { data: ranking = [], isLoading } = useUserRanking(targetUserId || undefined);
   const { data: profile } = useProfile(targetUserId || undefined);
-  const isOwn = targetUserId === currentUser?.id;
+  const { data: relationship } = useRelationship(currentUser?.id, isOwn ? undefined : targetUserId || undefined);
   const profileName = (profile as any)?.name || 'Usuario';
+  const relStatus = (relationship as string) ?? 'none';
+  const hasAccess = isOwn || relStatus === 'following' || relStatus === 'mutual';
 
   // Build pins from ranking data (deduplicated visits with restaurant info)
   const mapPins: MapPin[] = useMemo(() => {
@@ -94,6 +97,19 @@ export default function ProfileMapScreen() {
         <View style={{ width: 44 }} />
       </View>
 
+      {/* Access gate */}
+      {!hasAccess ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+          <MaterialIcons name="lock" size={48} color={COLORS.outlineVariant} />
+          <Text style={{ fontFamily: 'NotoSerif-Bold', fontSize: 16, color: COLORS.primary, marginTop: 12, textAlign: 'center' }}>
+            Mapa privado
+          </Text>
+          <Text style={{ fontFamily: 'Manrope-Regular', fontSize: 13, color: COLORS.outline, marginTop: 6, textAlign: 'center', lineHeight: 19 }}>
+            Sigue a {profileName} para ver su mapa de restaurantes.
+          </Text>
+        </View>
+      ) : (
+      <>
       {/* Stats bar */}
       <View style={styles.statsBar}>
         <MaterialIcons name="place" size={16} color={COLORS.onSecondaryContainer} />
@@ -173,6 +189,8 @@ export default function ProfileMapScreen() {
             );
           })}
         </MapView>
+      )}
+      </>
       )}
     </View>
   );

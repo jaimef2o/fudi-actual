@@ -328,8 +328,8 @@ export default function ProfileScreen() {
             )}
           </View>
 
-          {/* Map button */}
-          {realRanking.length > 0 && (
+          {/* Map button — visible for own profile or if following/mutual */}
+          {realRanking.length > 0 && (isOwn || isFollowing) && (
             <TouchableOpacity
               style={styles.mapBtn}
               activeOpacity={0.85}

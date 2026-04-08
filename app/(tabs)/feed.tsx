@@ -253,10 +253,18 @@ export default function FeedScreen() {
     );
   }
 
-  const allPosts = data?.pages.flatMap((p) => p) ?? [];
+  // Deduplicate posts by ID (pagination overlap can cause duplicates)
+  const allPostsRaw = data?.pages.flatMap((p) => p) ?? [];
+  const seenIds = new Set<string>();
+  const allPosts = allPostsRaw.filter((p) => {
+    if (seenIds.has(p.id)) return false;
+    seenIds.add(p.id);
+    return true;
+  });
   // Friends tab: show only mutual friends; Para Ti tab: show everything (already filtered by algorithm)
   const posts = onlyMutual ? allPosts.filter((p) => p.is_mutual) : allPosts;
-  const ownPosts = ownData?.pages.flatMap((p) => p) ?? [];
+  const ownPostsRaw = ownData?.pages.flatMap((p) => p) ?? [];
+  const ownPosts = ownPostsRaw.filter((p) => !seenIds.has(p.id));
 
   // ── Refetch feed every time screen comes into focus ──────────────────────
   const lastFocusRef = useRef(0);
